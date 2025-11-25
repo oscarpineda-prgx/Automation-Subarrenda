@@ -1,0 +1,7 @@
+pandas
+numpy
+openpyxl
+xlsxwriter
+python-dateutil
+pyyaml
+loguru
