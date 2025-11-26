@@ -154,7 +154,6 @@ def generar_detalle_por_proveedor(df_contratos, subarrendatario, rfc_sub=None, d
     df_detalle["cliente"] = df_prov["nombre_del_subarrendatario"].iloc[0]
     df_detalle["area"] = df_prov["superficie_del_inmueble"].iloc[0]
     df_detalle["direccion_inmueble"] = df_prov["direccion_del_inmueble"].iloc[0]
-
     renta = pd.to_numeric(df_prov["monto_de_renta_mensual"].iloc[0], errors="coerce")
     cuota = pd.to_numeric(df_prov["cuota_de_mantenimiento"].iloc[0], errors="coerce")
     renta = 0 if pd.isna(renta) else renta

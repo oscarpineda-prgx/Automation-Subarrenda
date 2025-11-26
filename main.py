@@ -1,6 +1,7 @@
 from src.loader import load_all
 from src.detalle_builder import generar_detalle_todos
 from src.resumen_builder import generar_resumen
+from src.format_excel import format_workbook
 
 def main():
     clientes, contratos, inpc = load_all()
@@ -25,6 +26,14 @@ def main():
     output_path_resumen = "data/output/resumen_subarrendatarios.xlsx"
     resumen.to_excel(output_path_resumen, index=False)
     print(f"Resumen guardado en {output_path_resumen}")
+
+    # Aplicar formato a ambos archivos generados
+    for path in (output_path_detalle, output_path_resumen):
+        try:
+            format_workbook(path)
+            print(f"Formato aplicado a {path}")
+        except Exception as exc:
+            print(f"No se pudo formatear {path}: {exc}")
 
 if __name__ == "__main__":
     main()

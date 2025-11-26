@@ -24,10 +24,16 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
             columns=[
                 "rfc",
                 "cliente",
+                "area",
+                "fecha_contrato_inicio",
+                "fecha_contrato_fin",
+                "renta_mensual_contrato",
+                "duracion_meses_contrato",
                 "diferencia_base_vs_aud_sum",
                 "primer_importe_renta_cliente",
                 "primer_importe_renta_auditoria",
                 "estatus_cobro",
+                "count_meses_sin_cobro",
             ]
         )
 
@@ -55,6 +61,50 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
     base_primeros = detalle.copy()
     primeros_cliente = _primer_importe(base_primeros, "importe_renta_cliente")
     primeros_auditoria = _primer_importe(base_primeros, "importe_renta_auditoria")
+
+    def _count_meses_sin_cobro(df_base: pd.DataFrame) -> pd.Series:
+        """
+        Cuenta meses sin cobro dentro del rango entre el primer y último importe_renta_cliente > 0.
+        Si nunca hay cobro, devuelve 0.
+        """
+        if "importe_renta_cliente" not in df_base.columns:
+            return pd.Series(dtype=int)
+
+        def contar(grp: pd.DataFrame) -> int:
+            ordenado = grp.sort_values("fecha") if "fecha" in grp.columns else grp.copy()
+            vals = pd.to_numeric(ordenado["importe_renta_cliente"], errors="coerce").fillna(0)
+            pos = vals[vals > 0]
+            if pos.empty:
+                return 0
+            start = pos.index[0]
+            end = pos.index[-1]
+            rango = vals.loc[start:end]
+            return int((rango <= 0).sum())
+
+        res = df_base.groupby(["rfc", "cliente"]).apply(contar)
+        res.name = "count_meses_sin_cobro"
+        return res
+
+    count_meses = _count_meses_sin_cobro(detalle)
+    # Info de contrato derivada del detalle (sin agregar columnas nuevas al detalle)
+    agregados = {}
+    if "area" in detalle.columns:
+        agregados["area"] = ("area", "first")
+    if "fecha" in detalle.columns:
+        agregados["fecha_contrato_inicio"] = ("fecha", "min")
+        agregados["fecha_contrato_fin"] = ("fecha", "max")
+        agregados["duracion_meses_contrato"] = ("fecha", "count")
+    if "importe_renta_auditoria" in detalle.columns:
+        agregados["renta_mensual_contrato"] = ("importe_renta_auditoria", "first")
+
+    if agregados:
+        contrato_info = (
+            detalle.groupby(["rfc", "cliente"])
+            .agg(**agregados)
+            .reset_index()
+        )
+    else:
+        contrato_info = pd.DataFrame(columns=["rfc", "cliente"])
 
     # Base completa de claves rfc + cliente (no se eliminan duplicados de RFC con nombres distintos)
     claves = detalle[["rfc", "cliente"]].drop_duplicates()
@@ -103,6 +153,35 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
         estatus.rename("estatus_cobro"), on=["rfc", "cliente"], how="left"
     )
     resumen["estatus_cobro"] = resumen["estatus_cobro"].fillna("NO HAY COBRO")
+
+    resumen = resumen.merge(
+        count_meses.rename("count_meses_sin_cobro"),
+        on=["rfc", "cliente"],
+        how="left",
+    )
+    resumen["count_meses_sin_cobro"] = resumen["count_meses_sin_cobro"].fillna(0).astype(int)
+
+    if not contrato_info.empty:
+        resumen = resumen.merge(contrato_info, on=["rfc", "cliente"], how="left")
+
+    # Reordenar columnas segun solicitud
+    orden = [
+        "rfc",
+        "cliente",
+        "area",
+        "fecha_contrato_inicio",
+        "fecha_contrato_fin",
+        "renta_mensual_contrato",
+        "duracion_meses_contrato",
+        "diferencia_base_vs_aud_sum",
+        "primer_importe_renta_cliente",
+        "primer_importe_renta_auditoria",
+        "estatus_cobro",
+        "count_meses_sin_cobro",
+    ]
+    presentes = [c for c in orden if c in resumen.columns]
+    resto = [c for c in resumen.columns if c not in presentes]
+    resumen = resumen[presentes + resto]
 
     return resumen
 
