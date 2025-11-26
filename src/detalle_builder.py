@@ -125,7 +125,7 @@ def agregar_incremento_constante(detalle, valor="INPC"):
     return det
 
 
-def generar_detalle_por_proveedor(df_contratos, subarrendatario, df_inpc=None):
+def generar_detalle_por_proveedor(df_contratos, subarrendatario, rfc_sub=None, df_inpc=None):
     """
     Genera el detalle mensual para un subarrendatario usando df_contratos normalizado.
     Columnas esperadas: fecha_de_firma_del_contrato, fecha_de_terminacion_del_contrato,
@@ -133,8 +133,10 @@ def generar_detalle_por_proveedor(df_contratos, subarrendatario, df_inpc=None):
     direccion_del_inmueble, monto_de_renta_mensual, cuota_de_mantenimiento.
     """
     df_prov = df_contratos[df_contratos["nombre_del_subarrendatario"] == subarrendatario]
+    if rfc_sub is not None:
+        df_prov = df_prov[df_prov["rfc_del_subarrendatario"] == rfc_sub]
     if df_prov.empty:
-        raise ValueError(f"Subarrendatario no encontrado: {subarrendatario}")
+        raise ValueError(f"Subarrendatario no encontrado: {subarrendatario} (rfc={rfc_sub})")
 
     # Toma la primera fila para fechas
     fecha_firma = df_prov["fecha_de_firma_del_contrato"].iloc[0]
@@ -179,11 +181,23 @@ def generar_detalle_todos(df_contratos, df_clientes=None, df_inpc=None):
     """
     detalles = []
     saltados = 0
-    for sub in df_contratos["nombre_del_subarrendatario"].dropna().unique():
+    # Iterar por clave combinada nombre + rfc para no perder registros con el mismo nombre pero distinto RFC
+    claves = (
+        df_contratos[["nombre_del_subarrendatario", "rfc_del_subarrendatario"]]
+        .dropna(subset=["nombre_del_subarrendatario"])
+        .drop_duplicates()
+    )
+    for _, row in claves.iterrows():
+        sub = row["nombre_del_subarrendatario"]
+        rfc = row["rfc_del_subarrendatario"]
         try:
-            detalles.append(generar_detalle_por_proveedor(df_contratos, sub, df_inpc=df_inpc))
+            detalles.append(
+                generar_detalle_por_proveedor(
+                    df_contratos, sub, rfc_sub=rfc, df_inpc=df_inpc
+                )
+            )
         except ValueError as exc:
-            # Omite entradas con fechas inválidas o datos faltantes
+            # Omite entradas con fechas inv?lidas o datos faltantes
             print(f"Saltando {sub}: {exc}")
             saltados += 1
     if not detalles:
