@@ -146,6 +146,20 @@ def _buscar_fecha_primer_cobro(df_detalle: pd.DataFrame) -> Optional[pd.Timestam
     return cobros.iloc[0]["fecha"]
 
 
+def _diff_meses(fecha_a: Optional[pd.Timestamp], fecha_b: Optional[pd.Timestamp]) -> Optional[int]:
+    """Devuelve diferencia absoluta en meses entre dos fechas (ajusta si el día final es menor)."""
+    if fecha_a is None or fecha_b is None:
+        return None
+    f1 = pd.to_datetime(fecha_a, errors="coerce")
+    f2 = pd.to_datetime(fecha_b, errors="coerce")
+    if pd.isna(f1) or pd.isna(f2):
+        return None
+    meses = (f2.year - f1.year) * 12 + (f2.month - f1.month)
+    if f2.day < f1.day:
+        meses -= 1
+    return abs(int(meses))
+
+
 def _agregar_tabla_incrementos(
     ruta: str,
     mes_fda_num: Optional[int],
@@ -282,11 +296,7 @@ def exportar_detalles_individuales(
         mes_firma = int(pd.to_datetime(fecha_firma).month) if fecha_firma is not None else None
         fecha_primer_cobro = _buscar_fecha_primer_cobro(df_grp)
         mes_primer_cobro = int(pd.to_datetime(fecha_primer_cobro).month) if fecha_primer_cobro is not None else None
-        diferencia_cobro = (
-            abs(int(mes_firma) - int(mes_primer_cobro))
-            if mes_firma is not None and mes_primer_cobro is not None
-            else None
-        )
+        diferencia_cobro = _diff_meses(fecha_firma, fecha_primer_cobro)
 
         nombre_archivo = f"{_sanitizar_nombre_archivo(rfc)}_{_sanitizar_nombre_archivo(cliente)}.xlsx"
         ruta = os.path.join(output_dir, nombre_archivo)
