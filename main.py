@@ -18,7 +18,7 @@ def main():
     print("Filas totales en detalle:", len(detalle))
 
     # Generar detalle individual por RFC + cliente
-    exportar_detalles_individuales(detalle)
+    exportar_detalles_individuales(detalle, clientes, contratos)
 
     # Guardar a Excel en data/output
     output_path_detalle = "data/output/detalle_subarrendatarios.xlsx"

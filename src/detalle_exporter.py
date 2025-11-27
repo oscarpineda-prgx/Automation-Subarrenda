@@ -191,6 +191,14 @@ def exportar_detalles_individuales(
 
     rutas = []
     for (rfc, cliente), df_grp in base.groupby(["rfc", "cliente"]):
+        mes_fda_num, mes_fda_txt = _buscar_mes_fda(df_clientes, rfc, cliente)
+        mes_aud_num, mes_aud_txt = _buscar_mes_auditoria(df_contratos, rfc, cliente)
+        diferencia = (
+            abs(int(mes_fda_num) - int(mes_aud_num))
+            if mes_fda_num is not None and mes_aud_num is not None
+            else None
+        )
+
         nombre_archivo = f"{_sanitizar_nombre_archivo(rfc)}_{_sanitizar_nombre_archivo(cliente)}.xlsx"
         ruta = os.path.join(output_dir, nombre_archivo)
         df_sorted = df_grp.sort_values("fecha") if "fecha" in df_grp.columns else df_grp
@@ -201,6 +209,18 @@ def exportar_detalles_individuales(
                 format_workbook(ruta)
             except Exception as exc:
                 print(f"No se pudo formatear {ruta}: {exc}")
+
+        try:
+            _agregar_tabla_incrementos(
+                ruta,
+                mes_fda_num=mes_fda_num,
+                mes_fda_txt=mes_fda_txt,
+                mes_aud_num=mes_aud_num,
+                mes_aud_txt=mes_aud_txt,
+                diferencia=diferencia,
+            )
+        except Exception as exc:
+            print(f"No se pudo agregar tabla de incrementos a {ruta}: {exc}")
 
         rutas.append(ruta)
 
