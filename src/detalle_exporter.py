@@ -4,6 +4,7 @@ from typing import List, Optional, Tuple
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.drawing.image import Image
 
 from src.format_excel import format_workbook
 
@@ -159,6 +160,70 @@ def _diff_meses(fecha_a: Optional[pd.Timestamp], fecha_b: Optional[pd.Timestamp]
         meses -= 1
     return abs(int(meses))
 
+def _calcular_total_diferencia(df_detalle: pd.DataFrame) -> Optional[float]:
+    """Suma diferencia_base_vs_aud solo donde importe_renta_cliente > 0."""
+    if "importe_renta_cliente" not in df_detalle.columns or "diferencia_base_vs_aud" not in df_detalle.columns:
+        return None
+
+    renta = pd.to_numeric(df_detalle["importe_renta_cliente"], errors="coerce").fillna(0)
+    diferencia = pd.to_numeric(df_detalle["diferencia_base_vs_aud"], errors="coerce")
+    filtro = diferencia[renta > 0]
+    if filtro.empty:
+        return 0.0
+    return float(filtro.sum())
+
+
+def _inserta_encabezado_presentacion(
+    ruta: str,
+    rfc: str,
+    cliente: str,
+    total_diferencia: Optional[float],
+    logo_path: str = "data/input/Picture1.png",
+) -> None:
+    """Inserta logo, titulos y total de diferencia en la parte superior de la hoja."""
+    wb = load_workbook(ruta)
+    ws = wb.active
+
+    # Reservar espacio arriba del encabezado original
+    espacio = 8
+    ws.insert_rows(1, espacio)
+
+    # Logo a la izquierda
+    try:
+        if os.path.isfile(logo_path):
+            img = Image(logo_path)
+            img.width = 180
+            img.height = 80
+            ws.add_image(img, "B2")
+        else:
+            print(f"Logo no encontrado en {logo_path}")
+    except Exception as exc:
+        print(f"No se pudo insertar logo en {ruta}: {exc}")
+
+    titulo = ws.cell(row=3, column=6, value="DETALLE DIFERENCIA DE COBRO SUBARRENDAMIENTOS")
+    titulo.font = Font(bold=True, size=14)
+    titulo.alignment = Alignment(horizontal="center")
+    ws.merge_cells(start_row=3, start_column=6, end_row=3, end_column=13)
+
+    subtitulo_txt = f"{str(rfc).strip()} - {str(cliente).strip()}"
+    subtitulo = ws.cell(row=4, column=6, value=subtitulo_txt)
+    subtitulo.font = Font(bold=True, size=12)
+    subtitulo.alignment = Alignment(horizontal="center")
+    ws.merge_cells(start_row=4, start_column=6, end_row=4, end_column=13)
+
+    etiqueta_total = ws.cell(row=6, column=14, value="Total Diferencia base vs auditoria")
+    etiqueta_total.font = Font(bold=True)
+    etiqueta_total.alignment = Alignment(horizontal="center")
+    ws.merge_cells(start_row=6, start_column=14, end_row=6, end_column=16)
+
+    valor_total = "" if total_diferencia is None else round(float(total_diferencia), 2)
+    celda_total = ws.cell(row=6, column=17, value=valor_total)
+    celda_total.alignment = Alignment(horizontal="center")
+    if total_diferencia is not None:
+        celda_total.number_format = '_("$"* #,##0.00_);_("$"* (#,##0.00);_("$"* "-"??_);_(@_)'
+
+    wb.save(ruta)
+
 
 def _agregar_tabla_incrementos(
     ruta: str,
@@ -303,6 +368,8 @@ def exportar_detalles_individuales(
         df_sorted = df_grp.sort_values("fecha") if "fecha" in df_grp.columns else df_grp
         df_sorted.to_excel(ruta, index=False)
 
+        total_diferencia = _calcular_total_diferencia(df_sorted)
+
         if aplicar_formato:
             try:
                 format_workbook(ruta)
@@ -310,6 +377,13 @@ def exportar_detalles_individuales(
                 print(f"No se pudo formatear {ruta}: {exc}")
 
         try:
+            _inserta_encabezado_presentacion(
+                ruta,
+                rfc=rfc,
+                cliente=cliente,
+                total_diferencia=total_diferencia,
+            )
+
             start_col = _agregar_tabla_incrementos(
                 ruta,
                 mes_fda_num=mes_fda_num,

@@ -88,6 +88,9 @@ def _style_headers(headers: Iterable):
 def format_workbook(path: str):
     wb = load_workbook(path)
     for ws in wb.worksheets:
+        # Oculta líneas de cuadrícula para una apariencia limpia
+        ws.sheet_view.showGridLines = False
+
         if ws.max_row < 2:
             _style_headers(ws[1])
             continue
