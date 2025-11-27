@@ -1,6 +1,6 @@
 from src.loader import load_all
 from src.detalle_builder import generar_detalle_todos
-from src.resumen_builder import generar_resumen
+from src.resumen_builder import generar_resumen, aplicar_presentacion_resumen
 from src.format_excel import format_workbook
 from src.detalle_exporter import exportar_detalles_individuales
 
@@ -31,13 +31,19 @@ def main():
     resumen.to_excel(output_path_resumen, index=False)
     print(f"Resumen guardado en {output_path_resumen}")
 
-    # Aplicar formato a ambos archivos generados
+    # Aplicar formato y presentación
     for path in (output_path_detalle, output_path_resumen):
         try:
             format_workbook(path)
             print(f"Formato aplicado a {path}")
         except Exception as exc:
             print(f"No se pudo formatear {path}: {exc}")
+
+    try:
+        aplicar_presentacion_resumen(output_path_resumen)
+        print(f"Presentación aplicada a {output_path_resumen}")
+    except Exception as exc:
+        print(f"No se pudo aplicar presentación a resumen: {exc}")
 
 if __name__ == "__main__":
     main()

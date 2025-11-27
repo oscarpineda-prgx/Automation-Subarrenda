@@ -1,5 +1,12 @@
 import sys
 import pandas as pd
+import os
+
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment, Font
+from openpyxl.drawing.image import Image
+
+from src.format_excel import format_workbook
 
 # Permitir imports desde src
 sys.path.append("src")
@@ -289,8 +296,41 @@ def generar_resumen_desde_fuente() -> pd.DataFrame:
     return generar_resumen(detalle)
 
 
+def aplicar_presentacion_resumen(
+    ruta: str,
+    logo_path: str = "data/input/Picture1.png",
+) -> None:
+    """Inserta logo y titulos en la parte superior de la hoja."""
+    wb = load_workbook(ruta)
+    ws = wb.active
+
+    # Reservar espacio arriba del encabezado original
+    espacio = 7
+    ws.insert_rows(1, espacio)
+
+    # Logo a la izquierda
+    try:
+        if os.path.isfile(logo_path):
+            img = Image(logo_path)
+            img.width = 180
+            img.height = 80
+            ws.add_image(img, "B2")
+        else:
+            print(f"Logo no encontrado en {logo_path}")
+    except Exception as exc:
+        print(f"No se pudo insertar logo en {ruta}: {exc}")
+
+    titulo = ws.cell(row=4, column=6, value="RESUMEN SUBARRENDATARIOS - DIFERENCIA DE COBRO")
+    titulo.font = Font(bold=True, size=14)
+    titulo.alignment = Alignment(horizontal="center")
+    ws.merge_cells(start_row=4, start_column=6, end_row=4, end_column=13)
+
+    wb.save(ruta)
+
+
 if __name__ == "__main__":
     resumen = generar_resumen_desde_fuente()
     output_path = "data/output/resumen_subarrendatarios.xlsx"
     resumen.to_excel(output_path, index=False)
+    aplicar_presentacion_resumen(output_path)
     print(f"Resumen guardado en {output_path}")
