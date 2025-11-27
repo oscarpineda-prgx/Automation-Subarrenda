@@ -17,8 +17,8 @@ def main():
     print("Detalle (todos los subarrendatarios):\n", detalle.head(), "\n")
     print("Filas totales en detalle:", len(detalle))
 
-    # Generar detalle individual por RFC + cliente (agrega tabla de incrementos por archivo)
-    exportar_detalles_individuales(detalle, df_clientes=clientes, df_contratos=contratos)
+    # Generar detalle individual por RFC + cliente
+    exportar_detalles_individuales(detalle)
 
     # Guardar a Excel en data/output
     output_path_detalle = "data/output/detalle_subarrendatarios.xlsx"

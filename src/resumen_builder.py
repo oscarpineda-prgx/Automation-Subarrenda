@@ -12,6 +12,8 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
     Genera un resumen agrupando por RFC y cliente.
     - Agrupa por rfc y cliente.
     - Suma diferencia_base_vs_aud.
+    - Agrega sumas de mtto/subtotales/totales solo sobre filas con cobro (importe_renta_cliente > 0).
+    - Incluye cuota de mantenimiento (%).
     - Incluye el primer importe_renta_cliente > 0 y el primer importe_renta_auditoria > 0 (o 0 si no existen).
     - Marca si hay cobro (importe_renta_cliente > 0 en alguna fila) o NO HAY COBRO.
     - No elimina RFC duplicados si el cliente difiere (clave = rfc + cliente).
@@ -29,6 +31,13 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
                 "fecha_contrato_fin",
                 "renta_mensual_contrato",
                 "duracion_meses_contrato",
+                "cuota_mantenimiento_pct",
+                "importe_mtto_cliente_cobro_sum",
+                "importe_mtto_auditoria_cobro_sum",
+                "subtotal_c_cobro_sum",
+                "subtotal_a_cobro_sum",
+                "total_c_cobro_sum",
+                "total_a_cobro_sum",
                 "diferencia_base_vs_aud_sum",
                 "primer_importe_renta_cliente",
                 "primer_importe_renta_auditoria",
@@ -61,6 +70,69 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
     base_primeros = detalle.copy()
     primeros_cliente = _primer_importe(base_primeros, "importe_renta_cliente")
     primeros_auditoria = _primer_importe(base_primeros, "importe_renta_auditoria")
+
+    def _sumas_condicion_cobro(df_base: pd.DataFrame) -> pd.DataFrame:
+        """
+        Suma importes solo en filas con cobro (importe_renta_cliente > 0).
+        Devuelve dataframe con columnas de sumas y cuota de mantenimiento.
+        """
+        cols = [
+            "rfc",
+            "cliente",
+            "importe_mtto_cliente_cobro_sum",
+            "importe_mtto_auditoria_cobro_sum",
+            "subtotal_c_cobro_sum",
+            "subtotal_a_cobro_sum",
+            "total_c_cobro_sum",
+            "total_a_cobro_sum",
+            "cuota_mantenimiento_pct",
+        ]
+        if df_base.empty:
+            return pd.DataFrame(columns=cols)
+
+        claves = df_base[["rfc", "cliente"]].drop_duplicates()
+
+        con_cobro = df_base[df_base["importe_renta_cliente"].fillna(0) > 0].copy()
+        sumas = (
+            con_cobro.assign(
+                importe_mtto_cliente=lambda d: pd.to_numeric(d.get("importe_mtto_cliente", 0), errors="coerce").fillna(0),
+                importe_mtto_auditoria=lambda d: pd.to_numeric(d.get("importe_mtto_auditoria", 0), errors="coerce").fillna(0),
+                subtotal_c=lambda d: pd.to_numeric(d.get("subtotal_c", 0), errors="coerce").fillna(0),
+                subtotal_a=lambda d: pd.to_numeric(d.get("subtotal_a", 0), errors="coerce").fillna(0),
+                total_c=lambda d: pd.to_numeric(d.get("total_c", 0), errors="coerce").fillna(0),
+                total_a=lambda d: pd.to_numeric(d.get("total_a", 0), errors="coerce").fillna(0),
+            )
+            .groupby(["rfc", "cliente"])
+            .agg(
+                importe_mtto_cliente_cobro_sum=("importe_mtto_cliente", "sum"),
+                importe_mtto_auditoria_cobro_sum=("importe_mtto_auditoria", "sum"),
+                subtotal_c_cobro_sum=("subtotal_c", "sum"),
+                subtotal_a_cobro_sum=("subtotal_a", "sum"),
+                total_c_cobro_sum=("total_c", "sum"),
+                total_a_cobro_sum=("total_a", "sum"),
+            )
+            .reset_index()
+        )
+
+        # Cuota por RFC (solo RFC, sin depender de que haya cobro)
+        cuota_map = None
+        if "cuota_mantenimiento" in df_base.columns:
+            cuota_map = (
+                df_base.assign(cuota_mantenimiento=lambda d: pd.to_numeric(d["cuota_mantenimiento"], errors="coerce"))
+                .groupby("rfc")["cuota_mantenimiento"]
+                .first()
+            )
+
+        # Ensamblar con todas las claves rfc+cliente
+        sumas = claves.merge(sumas, on=["rfc", "cliente"], how="left")
+        sumas["cuota_mantenimiento_pct"] = sumas["rfc"].map(cuota_map) if cuota_map is not None else None
+
+        for col in cols:
+            if col not in sumas.columns:
+                sumas[col] = None
+        return sumas[cols]
+
+    sumas_cobro = _sumas_condicion_cobro(detalle)
 
     def _count_meses_sin_cobro(df_base: pd.DataFrame) -> pd.Series:
         """
@@ -161,6 +233,20 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
     )
     resumen["count_meses_sin_cobro"] = resumen["count_meses_sin_cobro"].fillna(0).astype(int)
 
+    resumen = resumen.merge(sumas_cobro, on=["rfc", "cliente"], how="left")
+    for c in [
+        "importe_mtto_cliente_cobro_sum",
+        "importe_mtto_auditoria_cobro_sum",
+        "subtotal_c_cobro_sum",
+        "subtotal_a_cobro_sum",
+        "total_c_cobro_sum",
+        "total_a_cobro_sum",
+    ]:
+        if c in resumen.columns:
+            resumen[c] = resumen[c].fillna(0).round(2)
+    if "cuota_mantenimiento_pct" in resumen.columns:
+        resumen["cuota_mantenimiento_pct"] = resumen["cuota_mantenimiento_pct"].round(4)
+
     if not contrato_info.empty:
         resumen = resumen.merge(contrato_info, on=["rfc", "cliente"], how="left")
 
@@ -173,9 +259,16 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
         "fecha_contrato_fin",
         "renta_mensual_contrato",
         "duracion_meses_contrato",
-        "diferencia_base_vs_aud_sum",
+        "cuota_mantenimiento_pct",
         "primer_importe_renta_cliente",
+        "importe_mtto_cliente_cobro_sum",
+        "subtotal_c_cobro_sum",
+        "total_c_cobro_sum",
         "primer_importe_renta_auditoria",
+        "importe_mtto_auditoria_cobro_sum",
+        "subtotal_a_cobro_sum",
+        "total_a_cobro_sum",
+        "diferencia_base_vs_aud_sum",
         "estatus_cobro",
         "count_meses_sin_cobro",
     ]

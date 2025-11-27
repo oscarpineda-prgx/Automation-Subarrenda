@@ -7,7 +7,6 @@ from openpyxl.styles import Alignment, Font, PatternFill
 
 from src.format_excel import format_workbook
 
-
 # Meses en texto (enero=1, ...)
 _MESES = [
     "ENERO",
@@ -27,11 +26,7 @@ _MES_MAP = {m: i + 1 for i, m in enumerate(_MESES)}
 
 
 def _sanitizar_nombre_archivo(texto: str) -> str:
-    """
-    Limpia texto para usarlo como nombre de archivo en Windows.
-    - Quita caracteres no permitidos.
-    - Reemplaza espacios por guiones bajos.
-    """
+    """Limpia texto para usarlo como nombre de archivo en Windows."""
     if texto is None:
         return "sin_nombre"
     nombre = str(texto)
@@ -58,10 +53,8 @@ def _coerce_mes(val) -> Optional[int]:
         if txt.isdigit():
             num = int(txt)
             return num if 1 <= num <= 12 else None
-        # Intentar con nombre de mes
         if txt in _MES_MAP:
             return _MES_MAP[txt]
-        # Intentar con abreviatura
         for nombre, num in _MES_MAP.items():
             if nombre.startswith(txt[:3]):
                 return num
@@ -69,10 +62,7 @@ def _coerce_mes(val) -> Optional[int]:
 
 
 def _buscar_mes_fda(df_clientes: Optional[pd.DataFrame], rfc: str, cliente: str) -> Tuple[Optional[int], Optional[str]]:
-    """
-    Busca el mes de incremento FDA en base_clientes por RFC (y cliente si existe).
-    Devuelve (mes_num, mes_texto)
-    """
+    """Busca el mes de incremento FDA en base_clientes por RFC (y cliente si existe). Usa solo columna mes3."""
     if df_clientes is None or df_clientes.empty:
         return None, None
 
@@ -93,11 +83,7 @@ def _buscar_mes_fda(df_clientes: Optional[pd.DataFrame], rfc: str, cliente: str)
         if not prefer_cli.empty:
             filtrado = prefer_cli
 
-    if filtrado.empty:
-        return None, None
-
-    # Usar solo mes3 según solicitud
-    if "mes3" not in filtrado.columns:
+    if filtrado.empty or "mes3" not in filtrado.columns:
         return None, None
 
     for val in filtrado["mes3"]:
@@ -108,10 +94,7 @@ def _buscar_mes_fda(df_clientes: Optional[pd.DataFrame], rfc: str, cliente: str)
 
 
 def _buscar_mes_auditoria(df_contratos: Optional[pd.DataFrame], rfc: str, cliente: str) -> Tuple[Optional[int], Optional[str]]:
-    """
-    Toma el mes de la fecha de firma del contrato (auditoria) por RFC + cliente.
-    Devuelve (mes_num, mes_texto)
-    """
+    """Toma el mes de la fecha de firma del contrato (auditoria) por RFC + cliente."""
     if df_contratos is None or df_contratos.empty:
         return None, None
 
@@ -151,9 +134,8 @@ def _agregar_tabla_incrementos(
     wb = load_workbook(ruta)
     ws = wb.active
 
-    # Colocar la tabla con un espacio en blanco respecto a las columnas del detalle
-    start_col = ws.max_column + 2
-    start_row = 2  # evitar fila de encabezados del detalle
+    start_col = ws.max_column + 2  # un espacio en blanco
+    start_row = 2  # debajo de encabezados
 
     fill = PatternFill("solid", fgColor="1F4E78")
     font = Font(color="FFFFFF", bold=True)
@@ -190,16 +172,6 @@ def exportar_detalles_individuales(
     """
     Genera un archivo Excel por cada subarrendatario (clave RFC + cliente) y agrega
     una tabla con meses de incremento (FDA vs auditoria).
-
-    Args:
-        detalle: DataFrame con al menos columnas rfc, cliente y fecha.
-        df_clientes: Base de clientes (para mes de incremento FDA).
-        df_contratos: Base de contratos (para mes de firma del contrato).
-        output_dir: Carpeta donde se guardan los archivos individuales.
-        aplicar_formato: Si es True, aplica format_workbook a cada archivo.
-
-    Returns:
-        Lista de rutas generadas.
     """
     if detalle.empty:
         print("Detalle vacio: no se generan archivos individuales.")
@@ -212,8 +184,6 @@ def exportar_detalles_individuales(
     base = detalle.copy()
     base["rfc"] = base["rfc"].astype(str).str.strip()
     base["cliente"] = base["cliente"].astype(str).str.strip()
-
-    # Filtrar registros sin clave completa
     base = base[(base["rfc"] != "") & (base["cliente"] != "")]
     if base.empty:
         print("No hay registros con RFC y cliente para exportar.")
@@ -232,22 +202,6 @@ def exportar_detalles_individuales(
             except Exception as exc:
                 print(f"No se pudo formatear {ruta}: {exc}")
 
-        # Calcular info de incremento y agregar tabla a la derecha
-        mes_fda_num, mes_fda_txt = _buscar_mes_fda(df_clientes, rfc, cliente)
-        mes_aud_num, mes_aud_txt = _buscar_mes_auditoria(df_contratos, rfc, cliente)
-        diferencia = abs(mes_fda_num - mes_aud_num) if mes_fda_num and mes_aud_num else None
-
-        try:
-            _agregar_tabla_incrementos(
-                ruta,
-                mes_fda_num,
-                mes_fda_txt,
-                mes_aud_num,
-                mes_aud_txt,
-                diferencia,
-            )
-        except Exception as exc:
-            print(f"No se pudo agregar tabla de incrementos en {ruta}: {exc}")
         rutas.append(ruta)
 
     print(f"Archivos individuales generados: {len(rutas)} en {output_dir}")
