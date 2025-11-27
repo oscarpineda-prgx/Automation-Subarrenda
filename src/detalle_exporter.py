@@ -93,10 +93,10 @@ def _buscar_mes_fda(df_clientes: Optional[pd.DataFrame], rfc: str, cliente: str)
     return None, None
 
 
-def _buscar_mes_auditoria(df_contratos: Optional[pd.DataFrame], rfc: str, cliente: str) -> Tuple[Optional[int], Optional[str]]:
-    """Toma el mes de la fecha de firma del contrato (auditoria) por RFC + cliente."""
+def _buscar_fecha_firma(df_contratos: Optional[pd.DataFrame], rfc: str, cliente: str) -> Optional[pd.Timestamp]:
+    """Devuelve la fecha de firma del contrato (auditoria) por RFC + cliente."""
     if df_contratos is None or df_contratos.empty:
-        return None, None
+        return None
 
     df = df_contratos.copy()
     df["rfc_key"] = df["rfc_del_subarrendatario"].astype(str).str.strip().str.upper() if "rfc_del_subarrendatario" in df.columns else ""
@@ -113,13 +113,37 @@ def _buscar_mes_auditoria(df_contratos: Optional[pd.DataFrame], rfc: str, client
         filtrado = prefer_cli
 
     if filtrado.empty or "fecha_de_firma_del_contrato" not in filtrado.columns:
-        return None, None
+        return None
 
     fechas = pd.to_datetime(filtrado["fecha_de_firma_del_contrato"], errors="coerce").dropna()
     if fechas.empty:
+        return None
+    return fechas.iloc[0]
+
+
+def _buscar_mes_auditoria(df_contratos: Optional[pd.DataFrame], rfc: str, cliente: str) -> Tuple[Optional[int], Optional[str]]:
+    """Toma el mes de la fecha de firma del contrato (auditoria) por RFC + cliente."""
+    fecha = _buscar_fecha_firma(df_contratos, rfc, cliente)
+    if fecha is None:
         return None, None
-    mes_num = int(fechas.iloc[0].month)
+    mes_num = int(pd.to_datetime(fecha).month)
     return mes_num, _mes_a_texto(mes_num)
+
+
+def _buscar_fecha_primer_cobro(df_detalle: pd.DataFrame) -> Optional[pd.Timestamp]:
+    """Devuelve la primera fecha con importe_renta_cliente > 0 dentro del detalle individual."""
+    if "importe_renta_cliente" not in df_detalle.columns or "fecha" not in df_detalle.columns:
+        return None
+
+    df = df_detalle.copy()
+    df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
+    df = df.dropna(subset=["fecha"])
+    df = df.sort_values("fecha")
+
+    cobros = df[pd.to_numeric(df["importe_renta_cliente"], errors="coerce").fillna(0) > 0]
+    if cobros.empty:
+        return None
+    return cobros.iloc[0]["fecha"]
 
 
 def _agregar_tabla_incrementos(
@@ -129,7 +153,7 @@ def _agregar_tabla_incrementos(
     mes_aud_num: Optional[int],
     mes_aud_txt: Optional[str],
     diferencia: Optional[int],
-) -> None:
+) -> int:
     """Agrega tabla pequeña con meses de incremento en la misma hoja (a la derecha)."""
     wb = load_workbook(ruta)
     ws = wb.active
@@ -160,6 +184,62 @@ def _agregar_tabla_incrementos(
         c_num.alignment = center
 
     wb.save(ruta)
+    return start_col
+
+
+def _agregar_tabla_fechas(
+    ruta: str,
+    start_col: int,
+    fecha_firma: Optional[pd.Timestamp],
+    mes_firma: Optional[int],
+    fecha_cobro: Optional[pd.Timestamp],
+    mes_cobro: Optional[int],
+    diferencia: Optional[int],
+) -> None:
+    """Agrega tabla de fechas (firma vs primer cobro) debajo de la tabla de incrementos."""
+    wb = load_workbook(ruta)
+    ws = wb.active
+
+    start_row = 6  # deja un espacio en blanco después de la tabla anterior
+
+    fill = PatternFill("solid", fgColor="1F4E78")
+    font = Font(color="FFFFFF", bold=True)
+    center = Alignment(horizontal="center", vertical="center")
+
+    def _fmt_fecha(val: Optional[pd.Timestamp]):
+        if pd.isna(val) or val is None:
+            return ""
+        try:
+            return pd.to_datetime(val).to_pydatetime()
+        except Exception:
+            return val
+
+    filas = [
+        ("FECHA FIRMA CONTRATO", _fmt_fecha(fecha_firma), mes_firma),
+        ("FECHA PRIMER COBRO", _fmt_fecha(fecha_cobro), mes_cobro),
+        ("Diferencia", None, diferencia),
+    ]
+
+    for offset, (label, val_fecha, val_mes) in enumerate(filas):
+        row = start_row + offset
+        c_label = ws.cell(row=row, column=start_col, value=label)
+        c_label.fill = fill
+        c_label.font = font
+        c_label.alignment = center
+
+        c_fecha = ws.cell(row=row, column=start_col + 1, value=val_fecha if val_fecha is not None else "")
+        # Marcar formato fecha cuando aplique
+        try:
+            import datetime as _dt
+            if isinstance(val_fecha, (_dt.datetime, _dt.date)):
+                c_fecha.number_format = "mm/dd/yyyy"
+        except Exception:
+            pass
+        c_mes = ws.cell(row=row, column=start_col + 2, value=val_mes if val_mes is not None else "")
+        c_fecha.alignment = center
+        c_mes.alignment = center
+
+    wb.save(ruta)
 
 
 def exportar_detalles_individuales(
@@ -171,7 +251,7 @@ def exportar_detalles_individuales(
 ) -> List[str]:
     """
     Genera un archivo Excel por cada subarrendatario (clave RFC + cliente) y agrega
-    una tabla con meses de incremento (FDA vs auditoria).
+    dos tablas: meses de incremento (FDA vs auditoria) y fechas (firma vs primer cobro).
     """
     if detalle.empty:
         print("Detalle vacio: no se generan archivos individuales.")
@@ -198,6 +278,15 @@ def exportar_detalles_individuales(
             if mes_fda_num is not None and mes_aud_num is not None
             else None
         )
+        fecha_firma = _buscar_fecha_firma(df_contratos, rfc, cliente)
+        mes_firma = int(pd.to_datetime(fecha_firma).month) if fecha_firma is not None else None
+        fecha_primer_cobro = _buscar_fecha_primer_cobro(df_grp)
+        mes_primer_cobro = int(pd.to_datetime(fecha_primer_cobro).month) if fecha_primer_cobro is not None else None
+        diferencia_cobro = (
+            abs(int(mes_firma) - int(mes_primer_cobro))
+            if mes_firma is not None and mes_primer_cobro is not None
+            else None
+        )
 
         nombre_archivo = f"{_sanitizar_nombre_archivo(rfc)}_{_sanitizar_nombre_archivo(cliente)}.xlsx"
         ruta = os.path.join(output_dir, nombre_archivo)
@@ -211,13 +300,22 @@ def exportar_detalles_individuales(
                 print(f"No se pudo formatear {ruta}: {exc}")
 
         try:
-            _agregar_tabla_incrementos(
+            start_col = _agregar_tabla_incrementos(
                 ruta,
                 mes_fda_num=mes_fda_num,
                 mes_fda_txt=mes_fda_txt,
                 mes_aud_num=mes_aud_num,
                 mes_aud_txt=mes_aud_txt,
                 diferencia=diferencia,
+            )
+            _agregar_tabla_fechas(
+                ruta,
+                start_col=start_col,
+                fecha_firma=fecha_firma,
+                mes_firma=mes_firma,
+                fecha_cobro=fecha_primer_cobro,
+                mes_cobro=mes_primer_cobro,
+                diferencia=diferencia_cobro,
             )
         except Exception as exc:
             print(f"No se pudo agregar tabla de incrementos a {ruta}: {exc}")
