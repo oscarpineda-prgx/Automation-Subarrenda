@@ -2,6 +2,7 @@ from src.loader import load_all
 from src.detalle_builder import generar_detalle_todos
 from src.resumen_builder import generar_resumen
 from src.format_excel import format_workbook
+from src.detalle_exporter import exportar_detalles_individuales
 
 def main():
     clientes, contratos, inpc = load_all()
@@ -15,6 +16,9 @@ def main():
     detalle = generar_detalle_todos(contratos, clientes, inpc)
     print("Detalle (todos los subarrendatarios):\n", detalle.head(), "\n")
     print("Filas totales en detalle:", len(detalle))
+
+    # Generar detalle individual por RFC + cliente (agrega tabla de incrementos por archivo)
+    exportar_detalles_individuales(detalle, df_clientes=clientes, df_contratos=contratos)
 
     # Guardar a Excel en data/output
     output_path_detalle = "data/output/detalle_subarrendatarios.xlsx"
