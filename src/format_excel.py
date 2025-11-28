@@ -21,6 +21,7 @@ _MONEY_KEYS = [
     "mtto",
     "renta",
     "diferencia",
+    "dif",
     "auditoria",
 ]
 
@@ -31,7 +32,8 @@ def _looks_money(header: str) -> bool:
 
 
 def _looks_date(header: str) -> bool:
-    return "fecha" in header.lower()
+    h = header.lower()
+    return "fecha" in h or "f_contrato" in h
 
 
 def _to_datetime(val):
@@ -56,7 +58,7 @@ def _to_datetime(val):
         try:
             return _dt.datetime.fromisoformat(txt)
         except ValueError:
-            return val  # dejar tal cual si no se pudo parsear
+            return val
     return val
 
 
@@ -76,7 +78,7 @@ def _to_number(val):
 
 
 def _style_headers(headers: Iterable):
-    fill = PatternFill("solid", fgColor="1F4E78")  # azul medio oscuro
+    fill = PatternFill("solid", fgColor="1F4E78")
     font = Font(color="FFFFFF", bold=True)
     align = Alignment(horizontal="center", vertical="center")
     for cell in headers:

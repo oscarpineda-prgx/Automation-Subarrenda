@@ -26,28 +26,25 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
     - No elimina RFC duplicados si el cliente difiere (clave = rfc + cliente).
     """
     if detalle.empty:
-        return detalle
-
-    if detalle.empty:
         return pd.DataFrame(
             columns=[
                 "rfc",
                 "cliente",
                 "area",
-                "fecha_contrato_inicio",
-                "fecha_contrato_fin",
-                "renta_mensual_contrato",
-                "duracion_meses_contrato",
-                "cuota_mantenimiento_pct",
-                "importe_mtto_cliente_cobro_sum",
-                "importe_mtto_auditoria_cobro_sum",
-                "subtotal_c_cobro_sum",
-                "subtotal_a_cobro_sum",
-                "total_c_cobro_sum",
-                "total_a_cobro_sum",
-                "diferencia_base_vs_aud_sum",
-                "primer_importe_renta_cliente",
-                "primer_importe_renta_auditoria",
+                "f_contrato_ini",
+                "f_contrato_fin",
+                "renta_mensual",
+                "duracion_meses",
+                "cuota_mantenimiento",
+                "sum_importe_mtto_c",
+                "sum_importe_mtto_a",
+                "sum_subtotal_c",
+                "sum_subtotal_a",
+                "sum_total_c",
+                "sum_total_a",
+                "sum_dif_base_vs_aud",
+                "primer_importe_renta_c",
+                "primer_importe_renta_a",
                 "estatus_cobro",
                 "count_meses_sin_cobro",
             ]
@@ -257,25 +254,43 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
     if not contrato_info.empty:
         resumen = resumen.merge(contrato_info, on=["rfc", "cliente"], how="left")
 
+    column_renames = {
+        "fecha_contrato_inicio": "f_contrato_ini",
+        "fecha_contrato_fin": "f_contrato_fin",
+        "renta_mensual_contrato": "renta_mensual",
+        "duracion_meses_contrato": "duracion_meses",
+        "cuota_mantenimiento_pct": "cuota_mantenimiento",
+        "primer_importe_renta_cliente": "primer_importe_renta_c",
+        "importe_mtto_cliente_cobro_sum": "sum_importe_mtto_c",
+        "subtotal_c_cobro_sum": "sum_subtotal_c",
+        "total_c_cobro_sum": "sum_total_c",
+        "primer_importe_renta_auditoria": "primer_importe_renta_a",
+        "importe_mtto_auditoria_cobro_sum": "sum_importe_mtto_a",
+        "subtotal_a_cobro_sum": "sum_subtotal_a",
+        "total_a_cobro_sum": "sum_total_a",
+        "diferencia_base_vs_aud_sum": "sum_dif_base_vs_aud",
+    }
+    resumen = resumen.rename(columns=column_renames)
+
     # Reordenar columnas segun solicitud
     orden = [
         "rfc",
         "cliente",
         "area",
-        "fecha_contrato_inicio",
-        "fecha_contrato_fin",
-        "renta_mensual_contrato",
-        "duracion_meses_contrato",
-        "cuota_mantenimiento_pct",
-        "primer_importe_renta_cliente",
-        "importe_mtto_cliente_cobro_sum",
-        "subtotal_c_cobro_sum",
-        "total_c_cobro_sum",
-        "primer_importe_renta_auditoria",
-        "importe_mtto_auditoria_cobro_sum",
-        "subtotal_a_cobro_sum",
-        "total_a_cobro_sum",
-        "diferencia_base_vs_aud_sum",
+        "f_contrato_ini",
+        "f_contrato_fin",
+        "renta_mensual",
+        "duracion_meses",
+        "cuota_mantenimiento",
+        "primer_importe_renta_c",
+        "sum_importe_mtto_c",
+        "sum_subtotal_c",
+        "sum_total_c",
+        "primer_importe_renta_a",
+        "sum_importe_mtto_a",
+        "sum_subtotal_a",
+        "sum_total_a",
+        "sum_dif_base_vs_aud",
         "estatus_cobro",
         "count_meses_sin_cobro",
     ]
