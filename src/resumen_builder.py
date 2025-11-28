@@ -46,6 +46,7 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
                 "primer_importe_renta_c",
                 "primer_importe_renta_a",
                 "estatus_cobro",
+                "acta_entrega",
                 "count_meses_sin_cobro",
             ]
         )
@@ -137,6 +138,57 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
         return sumas[cols]
 
     sumas_cobro = _sumas_condicion_cobro(detalle)
+
+    def _acta_entrega(df_base: pd.DataFrame) -> pd.Series:
+        """
+        Marca si el incremento del cliente ocurre en el mismo mes de aniversario que el de auditoria.
+        - Innecesaria: ambos importes incrementan en el primer mes de aniversario.
+        - Necesaria: auditoria incrementa en aniversario pero cliente no en ese mes.
+        - Desconocida: faltan datos para evaluar.
+        """
+        req_cols = {"fecha", "importe_renta_c", "importe_renta_auditoria"}
+        if not req_cols.issubset(df_base.columns):
+            return pd.Series(dtype=object)
+
+        def evaluar(grp: pd.DataFrame) -> str:
+            g = grp.copy()
+            g["fecha"] = pd.to_datetime(g["fecha"], errors="coerce")
+            g = g.dropna(subset=["fecha"]).sort_values("fecha")
+            if g.empty:
+                return "Desconocida"
+            inicio = g.iloc[0]["fecha"]
+            if pd.isna(inicio):
+                return "Desconocida"
+            aniversario = g[(g["fecha"] > inicio) & (g["fecha"].dt.month == inicio.month)]
+            if aniversario.empty:
+                return "Desconocida"
+            ann = aniversario.iloc[0]
+            ann_idx = g.index.get_loc(ann.name)
+            if isinstance(ann_idx, slice) or ann_idx is None:
+                return "Desconocida"
+            prev_pos = ann_idx - 1
+            if prev_pos < 0:
+                return "Desconocida"
+            prev = g.iloc[prev_pos]
+            cliente_prev = pd.to_numeric(prev["importe_renta_c"], errors="coerce")
+            cliente_ann = pd.to_numeric(ann["importe_renta_c"], errors="coerce")
+            aud_prev = pd.to_numeric(prev["importe_renta_auditoria"], errors="coerce")
+            aud_ann = pd.to_numeric(ann["importe_renta_auditoria"], errors="coerce")
+            if any(pd.isna([cliente_prev, cliente_ann, aud_prev, aud_ann])):
+                return "Desconocida"
+            inc_cliente = cliente_ann > cliente_prev
+            inc_auditoria = aud_ann > aud_prev
+            if inc_auditoria and inc_cliente:
+                return "Innecesaria"
+            if inc_auditoria and not inc_cliente:
+                return "Necesaria"
+            return "Desconocida"
+
+        res = df_base.groupby(["rfc", "subarrendatario"]).apply(evaluar)
+        res.name = "acta_entrega"
+        return res
+
+    acta = _acta_entrega(detalle)
 
     def _count_meses_sin_cobro(df_base: pd.DataFrame) -> pd.Series:
         """
@@ -231,6 +283,11 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
     resumen["estatus_cobro"] = resumen["estatus_cobro"].fillna("NO HAY COBRO")
 
     resumen = resumen.merge(
+        acta, on=["rfc", "subarrendatario"], how="left"
+    )
+    resumen["acta_entrega"] = resumen["acta_entrega"].fillna("Desconocida")
+
+    resumen = resumen.merge(
         count_meses.rename("count_meses_sin_cobro"),
         on=["rfc", "subarrendatario"],
         how="left",
@@ -292,6 +349,7 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
         "sum_total_a",
         "sum_dif_base_vs_aud",
         "estatus_cobro",
+        "acta_entrega",
         "count_meses_sin_cobro",
     ]
     presentes = [c for c in orden if c in resumen.columns]
