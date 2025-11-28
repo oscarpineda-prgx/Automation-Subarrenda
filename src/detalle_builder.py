@@ -14,6 +14,7 @@ def generar_fechas_mensuales(fecha_inicio, fecha_fin):
     end = _to_datetime(fecha_fin)
     if pd.isna(start) or pd.isna(end):
         return []
+    # Usa DateOffset mensual para respetar el mismo dia a traves del rango
     return pd.date_range(start=start, end=end, freq=pd.DateOffset(months=1))
 
 
@@ -72,7 +73,7 @@ def calcular_renta_auditoria_con_inpc(fechas, renta_inicial, df_inpc):
             # 2 meses antes de la fecha
             fecha_inpc = (f.normalize() - pd.DateOffset(months=2))
             pct = pct_map.get(fecha_inpc, 0) or 0
-            # Iguala la renta actual a renta actual * porcentaje del INPC
+            # Ajusta renta en cada aniversario aplicando INPC
             renta_actual = renta_actual * (1 + pct)
         
         # Inserta renta actual en la serie
@@ -107,6 +108,7 @@ def anexar_importe_renta_mtto_clientes(detalle, clientes):
         on=['ano_key','mes_key','rfc_key'],
         how='left'
     )
+    # Montos del cliente; si no hay match se van a 0
     merged['importe_renta_cliente'] = pd.to_numeric(merged['importe_renta'], errors='coerce').fillna(0).round(2)
     merged['importe_mtto_cliente'] = pd.to_numeric(merged["importe_mtto"], errors='coerce').fillna(0).round(2)
     merged["subtotal_c"] = (merged["importe_renta_cliente"] + merged["importe_mtto_cliente"]).round(2)

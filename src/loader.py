@@ -12,6 +12,7 @@ ruta_inpc = r'\\amer.prgx.com\Citrix\UserHomeDir\opined01\Desktop\Automation-Sub
 #  UTILIDADES
 # ------------------------------------------
 def normalizar_columnas(df):
+    # Limpia encabezados: trim, minúsculas, guiones bajos y sin acentos
     df.columns = (
         df.columns
         .str.strip()
@@ -27,6 +28,7 @@ def normalizar_columnas(df):
 def convertir_fechas(df):
     for col in df.columns:
         if "fecha" in col or "fec" in col:
+            # Coerce a datetime para evitar errores posteriores en merges/cálculos
             df[col] = pd.to_datetime(df[col], errors="coerce")
     return df
 

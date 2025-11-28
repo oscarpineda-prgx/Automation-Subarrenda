@@ -98,6 +98,7 @@ def format_workbook(path: str):
             continue
 
         headers = [cell.value or "" for cell in ws[1]]
+        # Detecta columnas por palabra clave en el encabezado
         money_cols = {idx for idx, h in enumerate(headers, start=1) if _looks_money(str(h))}
         date_cols = {idx for idx, h in enumerate(headers, start=1) if _looks_date(str(h))}
 

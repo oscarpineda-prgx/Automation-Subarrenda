@@ -44,6 +44,7 @@ def _mes_a_texto(num: Optional[int]) -> Optional[str]:
 
 
 def _coerce_mes(val) -> Optional[int]:
+    # Normaliza mes en texto/numero a entero 1-12
     if pd.isna(val):
         return None
     if isinstance(val, (int, float)):
@@ -79,6 +80,7 @@ def _buscar_mes_fda(df_clientes: Optional[pd.DataFrame], rfc: str, cliente: str)
     clave_cli = str(cliente).strip().upper()
 
     filtrado = df[df["rfc_key"] == clave_rfc]
+    # Si hay mismo RFC con clientes distintos, prioriza match exacto de cliente
     if not filtrado.empty and filtrado["cliente_key"].notna().any():
         prefer_cli = filtrado[filtrado["cliente_key"] == clave_cli]
         if not prefer_cli.empty:
@@ -184,7 +186,7 @@ def _inserta_encabezado_presentacion(
     wb = load_workbook(ruta)
     ws = wb.active
 
-    # Reservar espacio arriba del encabezado original
+    # Reservar espacio arriba del encabezado original para el bloque de titulo
     espacio = 8
     ws.insert_rows(1, espacio)
 
@@ -237,7 +239,8 @@ def _agregar_tabla_incrementos(
     wb = load_workbook(ruta)
     ws = wb.active
 
-    start_col = ws.max_column + 2  # un espacio en blanco
+    # Ubica la tabla a la derecha del detalle, dejando una columna en blanco
+    start_col = ws.max_column + 2
     start_row = 2  # debajo de encabezados
 
     fill = PatternFill("solid", fgColor="1F4E78")
@@ -350,6 +353,7 @@ def exportar_detalles_individuales(
 
     rutas = []
     for (rfc, cliente), df_grp in base.groupby(["rfc", "cliente"]):
+        # Datos auxiliares (mes FDA vs auditoria, fechas y diferencias) por cada RFC/cliente
         mes_fda_num, mes_fda_txt = _buscar_mes_fda(df_clientes, rfc, cliente)
         mes_aud_num, mes_aud_txt = _buscar_mes_auditoria(df_contratos, rfc, cliente)
         diferencia = (

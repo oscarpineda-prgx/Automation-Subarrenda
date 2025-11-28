@@ -29,7 +29,7 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(
             columns=[
                 "rfc",
-                "cliente",
+                "subarrendatario",
                 "area",
                 "f_contrato_ini",
                 "f_contrato_fin",
@@ -254,7 +254,9 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
     if not contrato_info.empty:
         resumen = resumen.merge(contrato_info, on=["rfc", "cliente"], how="left")
 
+    # Renombrar columnas a los alias solicitados por el usuario
     column_renames = {
+        "cliente": "subarrendatario",
         "fecha_contrato_inicio": "f_contrato_ini",
         "fecha_contrato_fin": "f_contrato_fin",
         "renta_mensual_contrato": "renta_mensual",
@@ -275,7 +277,7 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
     # Reordenar columnas segun solicitud
     orden = [
         "rfc",
-        "cliente",
+        "subarrendatario",
         "area",
         "f_contrato_ini",
         "f_contrato_fin",
