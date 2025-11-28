@@ -63,7 +63,7 @@ def _coerce_mes(val) -> Optional[int]:
     return None
 
 
-def _buscar_mes_fda(df_clientes: Optional[pd.DataFrame], rfc: str, cliente: str) -> Tuple[Optional[int], Optional[str]]:
+def _buscar_mes_fda(df_clientes: Optional[pd.DataFrame], rfc: str, subarrendatario: str) -> Tuple[Optional[int], Optional[str]]:
     """Busca el mes de incremento FDA en base_clientes por RFC (y cliente si existe). Usa solo columna mes3."""
     if df_clientes is None or df_clientes.empty:
         return None, None
@@ -77,7 +77,7 @@ def _buscar_mes_fda(df_clientes: Optional[pd.DataFrame], rfc: str, cliente: str)
         df["cliente_key"] = df["nombre_del_subarrendatario"].astype(str).str.strip().str.upper()
 
     clave_rfc = str(rfc).strip().upper()
-    clave_cli = str(cliente).strip().upper()
+    clave_cli = str(subarrendatario).strip().upper()
 
     filtrado = df[df["rfc_key"] == clave_rfc]
     # Si hay mismo RFC con clientes distintos, prioriza match exacto de cliente
@@ -96,8 +96,8 @@ def _buscar_mes_fda(df_clientes: Optional[pd.DataFrame], rfc: str, cliente: str)
     return None, None
 
 
-def _buscar_fecha_firma(df_contratos: Optional[pd.DataFrame], rfc: str, cliente: str) -> Optional[pd.Timestamp]:
-    """Devuelve la fecha de firma del contrato (auditoria) por RFC + cliente."""
+def _buscar_fecha_firma(df_contratos: Optional[pd.DataFrame], rfc: str, subarrendatario: str) -> Optional[pd.Timestamp]:
+    """Devuelve la fecha de firma del contrato (auditoria) por RFC + subarrendatario."""
     if df_contratos is None or df_contratos.empty:
         return None
 
@@ -108,7 +108,7 @@ def _buscar_fecha_firma(df_contratos: Optional[pd.DataFrame], rfc: str, cliente:
         df["cliente_key"] = df["nombre_del_subarrendatario"].astype(str).str.strip().str.upper()
 
     clave_rfc = str(rfc).strip().upper()
-    clave_cli = str(cliente).strip().upper()
+    clave_cli = str(subarrendatario).strip().upper()
 
     filtrado = df[df["rfc_key"] == clave_rfc]
     prefer_cli = filtrado[filtrado["cliente_key"] == clave_cli]
@@ -124,9 +124,9 @@ def _buscar_fecha_firma(df_contratos: Optional[pd.DataFrame], rfc: str, cliente:
     return fechas.iloc[0]
 
 
-def _buscar_mes_auditoria(df_contratos: Optional[pd.DataFrame], rfc: str, cliente: str) -> Tuple[Optional[int], Optional[str]]:
-    """Toma el mes de la fecha de firma del contrato (auditoria) por RFC + cliente."""
-    fecha = _buscar_fecha_firma(df_contratos, rfc, cliente)
+def _buscar_mes_auditoria(df_contratos: Optional[pd.DataFrame], rfc: str, subarrendatario: str) -> Tuple[Optional[int], Optional[str]]:
+    """Toma el mes de la fecha de firma del contrato (auditoria) por RFC + subarrendatario."""
+    fecha = _buscar_fecha_firma(df_contratos, rfc, subarrendatario)
     if fecha is None:
         return None, None
     mes_num = int(pd.to_datetime(fecha).month)
@@ -134,8 +134,8 @@ def _buscar_mes_auditoria(df_contratos: Optional[pd.DataFrame], rfc: str, client
 
 
 def _buscar_fecha_primer_cobro(df_detalle: pd.DataFrame) -> Optional[pd.Timestamp]:
-    """Devuelve la primera fecha con importe_renta_cliente > 0 dentro del detalle individual."""
-    if "importe_renta_cliente" not in df_detalle.columns or "fecha" not in df_detalle.columns:
+    """Devuelve la primera fecha con importe_renta_c > 0 dentro del detalle individual."""
+    if "importe_renta_c" not in df_detalle.columns or "fecha" not in df_detalle.columns:
         return None
 
     df = df_detalle.copy()
@@ -143,7 +143,7 @@ def _buscar_fecha_primer_cobro(df_detalle: pd.DataFrame) -> Optional[pd.Timestam
     df = df.dropna(subset=["fecha"])
     df = df.sort_values("fecha")
 
-    cobros = df[pd.to_numeric(df["importe_renta_cliente"], errors="coerce").fillna(0) > 0]
+    cobros = df[pd.to_numeric(df["importe_renta_c"], errors="coerce").fillna(0) > 0]
     if cobros.empty:
         return None
     return cobros.iloc[0]["fecha"]
@@ -163,11 +163,11 @@ def _diff_meses(fecha_a: Optional[pd.Timestamp], fecha_b: Optional[pd.Timestamp]
     return abs(int(meses))
 
 def _calcular_total_diferencia(df_detalle: pd.DataFrame) -> Optional[float]:
-    """Suma diferencia_base_vs_aud solo donde importe_renta_cliente > 0."""
-    if "importe_renta_cliente" not in df_detalle.columns or "diferencia_base_vs_aud" not in df_detalle.columns:
+    """Suma diferencia_base_vs_aud solo donde importe_renta_c > 0."""
+    if "importe_renta_c" not in df_detalle.columns or "diferencia_base_vs_aud" not in df_detalle.columns:
         return None
 
-    renta = pd.to_numeric(df_detalle["importe_renta_cliente"], errors="coerce").fillna(0)
+    renta = pd.to_numeric(df_detalle["importe_renta_c"], errors="coerce").fillna(0)
     diferencia = pd.to_numeric(df_detalle["diferencia_base_vs_aud"], errors="coerce")
     filtro = diferencia[renta > 0]
     if filtro.empty:
@@ -178,7 +178,7 @@ def _calcular_total_diferencia(df_detalle: pd.DataFrame) -> Optional[float]:
 def _inserta_encabezado_presentacion(
     ruta: str,
     rfc: str,
-    cliente: str,
+    subarrendatario: str,
     total_diferencia: Optional[float],
     logo_path: str = "data/input/Picture1.png",
 ) -> None:
@@ -207,7 +207,7 @@ def _inserta_encabezado_presentacion(
     titulo.alignment = Alignment(horizontal="center")
     ws.merge_cells(start_row=3, start_column=6, end_row=3, end_column=13)
 
-    subtitulo_txt = f"{str(rfc).strip()} - {str(cliente).strip()}"
+    subtitulo_txt = f"{str(rfc).strip()} - {str(subarrendatario).strip()}"
     subtitulo = ws.cell(row=4, column=6, value=subtitulo_txt)
     subtitulo.font = Font(bold=True, size=12)
     subtitulo.alignment = Alignment(horizontal="center")
@@ -332,42 +332,42 @@ def exportar_detalles_individuales(
     aplicar_formato: bool = True,
 ) -> List[str]:
     """
-    Genera un archivo Excel por cada subarrendatario (clave RFC + cliente) y agrega
+    Genera un archivo Excel por cada subarrendatario (clave RFC + subarrendatario) y agrega
     dos tablas: meses de incremento (FDA vs auditoria) y fechas (firma vs primer cobro).
     """
     if detalle.empty:
         print("Detalle vacio: no se generan archivos individuales.")
         return []
-    if not {"rfc", "cliente"}.issubset(detalle.columns):
-        raise ValueError("Detalle no contiene columnas requeridas: rfc y cliente.")
+    if not {"rfc", "subarrendatario"}.issubset(detalle.columns):
+        raise ValueError("Detalle no contiene columnas requeridas: rfc y subarrendatario.")
 
     os.makedirs(output_dir, exist_ok=True)
 
     base = detalle.copy()
     base["rfc"] = base["rfc"].astype(str).str.strip()
-    base["cliente"] = base["cliente"].astype(str).str.strip()
-    base = base[(base["rfc"] != "") & (base["cliente"] != "")]
+    base["subarrendatario"] = base["subarrendatario"].astype(str).str.strip()
+    base = base[(base["rfc"] != "") & (base["subarrendatario"] != "")]
     if base.empty:
-        print("No hay registros con RFC y cliente para exportar.")
+        print("No hay registros con RFC y subarrendatario para exportar.")
         return []
 
     rutas = []
-    for (rfc, cliente), df_grp in base.groupby(["rfc", "cliente"]):
-        # Datos auxiliares (mes FDA vs auditoria, fechas y diferencias) por cada RFC/cliente
-        mes_fda_num, mes_fda_txt = _buscar_mes_fda(df_clientes, rfc, cliente)
-        mes_aud_num, mes_aud_txt = _buscar_mes_auditoria(df_contratos, rfc, cliente)
+    for (rfc, subarrendatario), df_grp in base.groupby(["rfc", "subarrendatario"]):
+        # Datos auxiliares (mes FDA vs auditoria, fechas y diferencias) por cada RFC/subarrendatario
+        mes_fda_num, mes_fda_txt = _buscar_mes_fda(df_clientes, rfc, subarrendatario)
+        mes_aud_num, mes_aud_txt = _buscar_mes_auditoria(df_contratos, rfc, subarrendatario)
         diferencia = (
             abs(int(mes_fda_num) - int(mes_aud_num))
             if mes_fda_num is not None and mes_aud_num is not None
             else None
         )
-        fecha_firma = _buscar_fecha_firma(df_contratos, rfc, cliente)
+        fecha_firma = _buscar_fecha_firma(df_contratos, rfc, subarrendatario)
         mes_firma = int(pd.to_datetime(fecha_firma).month) if fecha_firma is not None else None
         fecha_primer_cobro = _buscar_fecha_primer_cobro(df_grp)
         mes_primer_cobro = int(pd.to_datetime(fecha_primer_cobro).month) if fecha_primer_cobro is not None else None
         diferencia_cobro = _diff_meses(fecha_firma, fecha_primer_cobro)
 
-        nombre_archivo = f"{_sanitizar_nombre_archivo(rfc)}_{_sanitizar_nombre_archivo(cliente)}.xlsx"
+        nombre_archivo = f"{_sanitizar_nombre_archivo(rfc)}_{_sanitizar_nombre_archivo(subarrendatario)}.xlsx"
         ruta = os.path.join(output_dir, nombre_archivo)
         df_sorted = df_grp.sort_values("fecha") if "fecha" in df_grp.columns else df_grp
         df_sorted.to_excel(ruta, index=False)
@@ -384,7 +384,7 @@ def exportar_detalles_individuales(
             _inserta_encabezado_presentacion(
                 ruta,
                 rfc=rfc,
-                cliente=cliente,
+                subarrendatario=subarrendatario,
                 total_diferencia=total_diferencia,
             )
 

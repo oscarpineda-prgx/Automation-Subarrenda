@@ -86,7 +86,7 @@ def _normalizar_clave_merge(df, col):
 
 def anexar_importe_renta_mtto_clientes(detalle, clientes):
     """
-    Cruza contra base de clientes por ano, mes y rfc, y agrega importe_renta_cliente y importe_mtto_cliente.
+    Cruza contra base de clientes por ano, mes y rfc, y agrega importe_renta_c y importe_mtto_c.
     Si no hay match, asigna 0.
     """
     det = detalle.copy()
@@ -109,9 +109,9 @@ def anexar_importe_renta_mtto_clientes(detalle, clientes):
         how='left'
     )
     # Montos del cliente; si no hay match se van a 0
-    merged['importe_renta_cliente'] = pd.to_numeric(merged['importe_renta'], errors='coerce').fillna(0).round(2)
-    merged['importe_mtto_cliente'] = pd.to_numeric(merged["importe_mtto"], errors='coerce').fillna(0).round(2)
-    merged["subtotal_c"] = (merged["importe_renta_cliente"] + merged["importe_mtto_cliente"]).round(2)
+    merged['importe_renta_c'] = pd.to_numeric(merged['importe_renta'], errors='coerce').fillna(0).round(2)
+    merged['importe_mtto_c'] = pd.to_numeric(merged["importe_mtto"], errors='coerce').fillna(0).round(2)
+    merged["subtotal_c"] = (merged["importe_renta_c"] + merged["importe_mtto_c"]).round(2)
     merged["total_c"] = (merged["subtotal_c"] * 1.16).round(2)
     merged["diferencia_base_vs_aud"] = (merged["total_c"] - merged["total_a"]).round(2)
     merged = merged.drop(columns=['importe_renta', "importe_mtto", 'ano_key', 'mes_key', 'rfc_key'])
@@ -153,7 +153,7 @@ def generar_detalle_por_proveedor(df_contratos, subarrendatario, rfc_sub=None, d
     df_detalle["ano"] = df_detalle["fecha"].dt.year
     df_detalle["mes"] = df_detalle["fecha"].dt.month
     df_detalle["rfc"] = df_prov["rfc_del_subarrendatario"].iloc[0]
-    df_detalle["cliente"] = df_prov["nombre_del_subarrendatario"].iloc[0]
+    df_detalle["subarrendatario"] = df_prov["nombre_del_subarrendatario"].iloc[0]
     df_detalle["area"] = df_prov["superficie_del_inmueble"].iloc[0]
     df_detalle["direccion_inmueble"] = df_prov["direccion_del_inmueble"].iloc[0]
     renta = pd.to_numeric(df_prov["monto_de_renta_mensual"].iloc[0], errors="coerce")
@@ -178,7 +178,7 @@ def generar_detalle_todos(df_contratos, df_clientes=None, df_inpc=None):
     """
     Genera el detalle mensual para todos los subarrendatarios en df_contratos.
     Concatena los resultados de generar_detalle_por_proveedor y,
-    si se pasa df_clientes, cruza importe_renta_cliente y importe_mtto_cliente.
+    si se pasa df_clientes, cruza importe_renta_c y importe_mtto_c.
     """
     detalles = []
     saltados = 0
@@ -213,12 +213,12 @@ def generar_detalle_todos(df_contratos, df_clientes=None, df_inpc=None):
         "ano",
         "mes",
         "rfc",
-        "cliente",
+        "subarrendatario",
         "area",
         "direccion_inmueble",
         "cuota_mantenimiento",
-        "importe_renta_cliente",
-        "importe_mtto_cliente",
+        "importe_renta_c",
+        "importe_mtto_c",
         "subtotal_c",
         "total_c",
         "importe_renta_auditoria",
