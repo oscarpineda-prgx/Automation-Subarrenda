@@ -41,15 +41,14 @@ main.py
 
 ## Como ejecutarlo
 
-1) Activar entorno (opcional si ya estas en venv):
+1) Activar entorno:
 ```
 .\venv\Scripts\activate
 ```
 2) Instalar dependencias:
 ```
 pip install -r requirements.txt
-# Opcional, para regenerar docs Word:
-pip install python-docx
+
 ```
 3) Verifica/actualiza archivos de entrada en `data/input`.
 4) Ejecuta:
