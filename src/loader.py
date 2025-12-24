@@ -93,6 +93,54 @@ def anexar_orden_a_clientes(df_clientes: pd.DataFrame, df_coincidencia: pd.DataF
     return clientes
 
 
+def completar_rfc_contratos(df_contratos: pd.DataFrame, df_coincidencia: pd.DataFrame) -> pd.DataFrame:
+    """
+    Rellena RFC faltante en contratos usando coincidencia.xlsx (clave oficial: orden).
+    No modifica registros con RFC ya presente.
+    """
+    if df_contratos is None or df_contratos.empty:
+        return df_contratos
+    if df_coincidencia is None or df_coincidencia.empty:
+        return df_contratos
+    if "orden" not in df_contratos.columns or "orden" not in df_coincidencia.columns:
+        return df_contratos
+
+    contratos = df_contratos.copy()
+    coincidencia = df_coincidencia.copy()
+
+    contratos["orden_key"] = pd.to_numeric(contratos["orden"], errors="coerce")
+    coincidencia["orden_key"] = pd.to_numeric(coincidencia["orden"], errors="coerce")
+    coincidencia = coincidencia.dropna(subset=["orden_key"])
+
+    rfc_col = "rfc_del_subarrendatario" if "rfc_del_subarrendatario" in contratos.columns else "rfc"
+    if rfc_col not in contratos.columns:
+        return df_contratos
+
+    mapa_rfc = (
+        coincidencia[["orden_key", "rfc"]]
+        .copy()
+        .assign(rfc=lambda d: d["rfc"].astype(str).str.strip())
+        .dropna(subset=["orden_key"])
+        .drop_duplicates(subset=["orden_key"], keep="first")
+        .set_index("orden_key")["rfc"]
+    )
+
+    contratos = contratos.merge(
+        mapa_rfc.rename("rfc_from_coinc"),
+        left_on="orden_key",
+        right_index=True,
+        how="left",
+    )
+
+    def _needs_fill(val):
+        return pd.isna(val) or str(val).strip() == ""
+
+    mask_fill = contratos[rfc_col].apply(_needs_fill)
+    contratos.loc[mask_fill, rfc_col] = contratos.loc[mask_fill, "rfc_from_coinc"]
+    contratos = contratos.drop(columns=["orden_key", "rfc_from_coinc"])
+    return contratos
+
+
 # ------------------------------------------
 #  FUNCIONES DE CARGA
 # ------------------------------------------
@@ -148,6 +196,7 @@ def load_all():
     try:
         coincidencia = load_coincidencia()
         clientes = anexar_orden_a_clientes(clientes, coincidencia)
+        contratos = completar_rfc_contratos(contratos, coincidencia)
         if "orden" in clientes.columns:
             faltantes = int(clientes["orden"].isna().sum())
             if faltantes:

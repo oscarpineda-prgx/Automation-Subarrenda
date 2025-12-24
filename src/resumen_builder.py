@@ -318,6 +318,23 @@ def generar_resumen(
     # Agrupa diferencia dentro del rango entre el primer y ultimo cobro (>0) y mantiene todas las claves.
     diferencia_sum = _sumar_diferencia_en_rango(detalle, claves)
 
+    def _incremento(df_base: pd.DataFrame) -> pd.Series:
+        """Toma el primer valor no nulo de incremento por contrato."""
+        if "incremento" not in df_base.columns:
+            return pd.Series(dtype=object)
+
+        def pick(grp: pd.DataFrame):
+            vals = grp["incremento"].dropna()
+            if vals.empty:
+                return None
+            return vals.iloc[0]
+
+        res = df_base.groupby(group_cols).apply(pick)
+        res.name = "incremento"
+        return res
+
+    incremento = _incremento(detalle)
+
     def _calcular_incrementos(
         df_base: pd.DataFrame,
         df_cli: pd.DataFrame,
@@ -408,6 +425,11 @@ def generar_resumen(
     resumen["estatus_cobro"] = resumen["estatus_cobro"].fillna("NO HAY COBRO")
 
     resumen = resumen.merge(
+        incremento.reset_index(), on=group_cols, how="left"
+    )
+    resumen["incremento"] = resumen["incremento"].fillna("INPC")
+
+    resumen = resumen.merge(
         acta.reset_index(), on=group_cols, how="left"
     )
     resumen["acta_entrega"] = resumen["acta_entrega"].fillna("Desconocida")
@@ -481,6 +503,7 @@ def generar_resumen(
         "sum_subtotal_a",
         "sum_total_a",
         "sum_dif_base_vs_aud",
+        "incremento",
         "estatus_cobro",
         "acta_entrega",
         "count_meses_sin_cobro",

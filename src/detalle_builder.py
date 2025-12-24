@@ -41,7 +41,7 @@ def calcular_total_a(df):
 
 
 def _mapa_inpc(df_inpc):
-    """Devuelve diccionario fecha normalizada -> porcentaje decimal."""
+    """Devuelve diccionario (ano, mes) -> porcentaje decimal."""
     if df_inpc is None or "fecha" not in df_inpc.columns:
         return {}
     col_pct = "%"
@@ -52,7 +52,8 @@ def _mapa_inpc(df_inpc):
         return {}
     fechas = pd.to_datetime(df_inpc["fecha"], errors="coerce")
     pct = pd.to_numeric(df_inpc[col_pct], errors="coerce")
-    return {f.normalize(): p for f, p in zip(fechas, pct) if pd.notna(f) and pd.notna(p)}
+    # Clave mensual (ano, mes)
+    return {(f.year, f.month): p for f, p in zip(fechas, pct) if pd.notna(f) and pd.notna(p)}
 
 
 def calcular_renta_auditoria_con_inpc(fechas, renta_inicial, df_inpc):
@@ -70,9 +71,9 @@ def calcular_renta_auditoria_con_inpc(fechas, renta_inicial, df_inpc):
     serie = []
     for idx, f in enumerate(fechas_dt):
         if idx > 0 and pd.notna(f) and mes_inicio is not None and f.month == mes_inicio:
-            # 2 meses antes de la fecha
+            # 2 meses antes de la fecha, clave por (ano, mes)
             fecha_inpc = (f.normalize() - pd.DateOffset(months=2))
-            pct = pct_map.get(fecha_inpc, 0) or 0
+            pct = pct_map.get((fecha_inpc.year, fecha_inpc.month), 0) or 0
             # Ajusta renta en cada aniversario aplicando INPC
             renta_actual = renta_actual * (1 + pct)
         
@@ -94,10 +95,12 @@ def anexar_importe_renta_mtto_clientes(detalle, clientes):
     Si no hay match, asigna 0.
     """
     det = detalle.copy()
-    base_cols = ["ano", "mes2", "rfc", "importe_renta", "importe_mtto"]
+    base_cols = ["ano", "mes2", "rfc", "importe_renta", "importe_mtto", "incremento"]
     if "orden" in clientes.columns:
         base_cols.insert(2, "orden")
     cli = clientes[[c for c in base_cols if c in clientes.columns]].copy()
+    if "incremento" not in cli.columns:
+        cli["incremento"] = None
 
     # Claves normalizadas, detalle
     det['ano_key'] = _normalizar_clave_merge(det, 'ano')
@@ -116,19 +119,42 @@ def anexar_importe_renta_mtto_clientes(detalle, clientes):
     # Decide claves de cruce
     usar_orden = "orden_key" in det.columns and "orden_key" in cli.columns
     if usar_orden:
-        join_cols = ["ano_key", "mes_key", "orden_key", "rfc_key"]
+        # Clave oficial: orden + periodo; RFC no obligatorio (puede venir vacio)
+        join_cols = ["ano_key", "mes_key", "orden_key"]
     else:
         join_cols = ["ano_key", "mes_key", "rfc_key"]
 
-    # Normalizar montos y agregar si hay duplicados en clientes por clave
+    # Normalizar montos y agregar si hay duplicados en clientes por clave (primer incremento)
     cli_amounts = (
         cli.assign(
             importe_renta=lambda d: pd.to_numeric(d.get("importe_renta", 0), errors="coerce").fillna(0),
             importe_mtto=lambda d: pd.to_numeric(d.get("importe_mtto", 0), errors="coerce").fillna(0),
         )
-        .groupby(join_cols, as_index=False)[["importe_renta", "importe_mtto"]]
-        .sum()
+        .groupby(join_cols, as_index=False)
+        .agg(
+            importe_renta=("importe_renta", "sum"),
+            importe_mtto=("importe_mtto", "sum"),
+            incremento=("incremento", "first"),
+        )
     )
+
+    # Lookup de incremento por orden (fallback rfc) sin depender de mes/año
+    inc_lookup = None
+    if "orden_key" in cli.columns:
+        inc_lookup = (
+            cli[["orden_key", "incremento"]]
+            .dropna(subset=["orden_key"])
+            .groupby("orden_key", as_index=False)["incremento"]
+            .first()
+            .rename(columns={"incremento": "incremento_lookup"})
+        )
+    elif "rfc_key" in cli.columns:
+        inc_lookup = (
+            cli[["rfc_key", "incremento"]]
+            .groupby("rfc_key", as_index=False)["incremento"]
+            .first()
+            .rename(columns={"incremento": "incremento_lookup"})
+        )
 
     # Merge detalle con clientes usando claves normalizadas (ya agregadas)
     merged = det.merge(
@@ -142,6 +168,12 @@ def anexar_importe_renta_mtto_clientes(detalle, clientes):
     merged["subtotal_c"] = (merged["importe_renta_c"] + merged["importe_mtto_c"]).round(2)
     merged["total_c"] = (merged["subtotal_c"] * 1.16).round(2)
     merged["diferencia_base_vs_aud"] = (merged["total_c"] - merged["total_a"]).round(2)
+    if inc_lookup is not None:
+        key = "orden_key" if "orden_key" in merged.columns and "orden_key" in inc_lookup.columns else "rfc_key"
+        merged = merged.merge(inc_lookup, on=key, how="left")
+        merged["incremento"] = merged["incremento"].fillna(merged.get("incremento_lookup"))
+        merged = merged.drop(columns=[c for c in ["incremento_lookup"] if c in merged.columns])
+    merged["incremento"] = merged["incremento"].fillna("INPC")
     drop_cols = ['importe_renta', "importe_mtto", 'ano_key', 'mes_key', 'rfc_key']
     if "orden_key" in merged.columns:
         drop_cols.append("orden_key")
@@ -154,7 +186,10 @@ _MESES = ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOST
 def agregar_incremento_constante(detalle, valor="INPC"):
     """Añade columna incremento con un valor constante."""
     det = detalle.copy()
-    det["incremento"] = valor
+    if "incremento" not in det.columns:
+        det["incremento"] = valor
+    else:
+        det["incremento"] = det["incremento"].fillna(valor)
     return det
 
 
