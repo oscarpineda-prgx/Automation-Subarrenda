@@ -12,9 +12,19 @@ from src.format_excel import format_workbook
 sys.path.append("src")
 from loader import load_all
 from detalle_builder import generar_detalle_todos
+from detalle_exporter import (
+    _buscar_mes_fda,
+    _buscar_mes_fda_por_orden,
+    _buscar_mes_auditoria,
+    _buscar_mes_auditoria_por_orden,
+)
 
 
-def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
+def generar_resumen(
+    detalle: pd.DataFrame,
+    df_clientes: pd.DataFrame = None,
+    df_contratos: pd.DataFrame = None,
+) -> pd.DataFrame:
     """
     Genera un resumen por contrato.
     - Si existe columna `orden`, agrupa por (orden, rfc, subarrendatario).
@@ -244,20 +254,128 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
     # Base completa de claves rfc + subarrendatario (no se eliminan duplicados de RFC con nombres distintos)
     claves = detalle[group_cols].drop_duplicates()
 
-    # Agrupa diferencia solo con cobro, pero mantiene todas las claves (resto queda en 0)
-    # La diferencia solo se suma donde importe_renta_c > 0; si no hay cobro, queda 0.
-    df_dif = detalle[
-        (detalle["importe_renta_c"].fillna(0) > 0)
-    ].copy()
-    diferencia_sum = (
-        df_dif.fillna({"diferencia_base_vs_aud": 0})
-        .groupby(group_cols, as_index=False)["diferencia_base_vs_aud"]
-        .sum()
-        .rename(columns={"diferencia_base_vs_aud": "diferencia_base_vs_aud_sum"})
-    )
-    diferencia_sum = claves.merge(
-        diferencia_sum, on=group_cols, how="left"
-    ).fillna({"diferencia_base_vs_aud_sum": 0})
+    def _sumar_diferencia_en_rango(
+        df_base: pd.DataFrame, claves_df: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Suma diferencia_base_vs_aud entre la primera y la ultima fecha con cobro (>0) por contrato.
+        Si faltan fechas validas, cae al comportamiento previo (solo suma filas con cobro).
+        """
+        req_cols = {"importe_renta_c", "diferencia_base_vs_aud"}
+        if df_base.empty or not req_cols.issubset(df_base.columns):
+            res = claves_df.copy()
+            res["diferencia_base_vs_aud_sum"] = 0
+            return res
+
+        if "fecha" not in df_base.columns:
+            df_dif = df_base[df_base["importe_renta_c"].fillna(0) > 0].copy()
+            diferencia = (
+                df_dif.fillna({"diferencia_base_vs_aud": 0})
+                .groupby(group_cols, as_index=False)["diferencia_base_vs_aud"]
+                .sum()
+                .rename(
+                    columns={"diferencia_base_vs_aud": "diferencia_base_vs_aud_sum"}
+                )
+            )
+            return (
+                claves_df.merge(diferencia, on=group_cols, how="left")
+                .fillna({"diferencia_base_vs_aud_sum": 0})
+            )
+
+        def sumar(grp: pd.DataFrame) -> float:
+            g = grp.copy()
+            g["fecha"] = pd.to_datetime(g["fecha"], errors="coerce")
+            importes = pd.to_numeric(g["importe_renta_c"], errors="coerce").fillna(0)
+            cobros = importes > 0
+            if not cobros.any():
+                return 0.0
+
+            cobros_validos = g.loc[cobros & g["fecha"].notna()]
+            if cobros_validos.empty:
+                dif_cobro = pd.to_numeric(
+                    g.loc[cobros, "diferencia_base_vs_aud"], errors="coerce"
+                ).fillna(0)
+                return float(dif_cobro.sum())
+
+            fecha_inicio = cobros_validos["fecha"].min()
+            fecha_fin = cobros_validos["fecha"].max()
+            en_rango = (g["fecha"] >= fecha_inicio) & (g["fecha"] <= fecha_fin)
+            diferencias = pd.to_numeric(
+                g["diferencia_base_vs_aud"], errors="coerce"
+            ).fillna(0)
+            return float(diferencias[en_rango.fillna(False)].sum())
+
+        sumas = (
+            df_base.groupby(group_cols)
+            .apply(sumar)
+            .reset_index(name="diferencia_base_vs_aud_sum")
+        )
+        return (
+            claves_df.merge(sumas, on=group_cols, how="left")
+            .fillna({"diferencia_base_vs_aud_sum": 0})
+        )
+
+    # Agrupa diferencia dentro del rango entre el primer y ultimo cobro (>0) y mantiene todas las claves.
+    diferencia_sum = _sumar_diferencia_en_rango(detalle, claves)
+
+    def _calcular_incrementos(
+        df_base: pd.DataFrame,
+        df_cli: pd.DataFrame,
+        df_con: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """
+        Obtiene mes incremento FDA/AUD y diferencia en meses por contrato (mismos criterios que detalle_exporter).
+        """
+        cols = group_cols + [
+            "mes_incremento_fda",
+            "mes_incremento_aud",
+            "diferencia_meses",
+        ]
+        if df_base.empty:
+            return pd.DataFrame(columns=cols)
+
+        registros = []
+        for _, grp in df_base.groupby(group_cols):
+            rfc_val = str(grp["rfc"].iloc[0]).strip() if "rfc" in grp.columns else ""
+            sub_val = (
+                str(grp["subarrendatario"].iloc[0]).strip()
+                if "subarrendatario" in grp.columns
+                else ""
+            )
+            if "orden" in grp.columns:
+                ord_val = pd.to_numeric(grp["orden"].iloc[0], errors="coerce")
+                mes_fda_num, mes_fda_txt = _buscar_mes_fda_por_orden(
+                    df_cli, ord_val, rfc_val, sub_val
+                )
+                mes_aud_num, mes_aud_txt = _buscar_mes_auditoria_por_orden(
+                    df_con, ord_val, rfc_val, sub_val
+                )
+            else:
+                mes_fda_num, mes_fda_txt = _buscar_mes_fda(
+                    df_cli, rfc_val, sub_val
+                )
+                mes_aud_num, mes_aud_txt = _buscar_mes_auditoria(
+                    df_con, rfc_val, sub_val
+                )
+
+            diferencia = (
+                abs(int(mes_fda_num) - int(mes_aud_num))
+                if mes_fda_num is not None and mes_aud_num is not None
+                else None
+            )
+            fila = {c: grp[c].iloc[0] for c in group_cols}
+            fila.update(
+                {
+                    "mes_incremento_fda": mes_fda_txt,
+                    "mes_incremento_aud": mes_aud_txt,
+                    "diferencia_meses": diferencia,
+                }
+            )
+            registros.append(fila)
+
+        return pd.DataFrame(registros, columns=cols)
+
+    incrementos = _calcular_incrementos(detalle, df_clientes, df_contratos)
     # Bandera de cobro: si existe al menos un importe_renta_c > 0
     estatus = (
         detalle.fillna({"importe_renta_c": 0})
@@ -300,6 +418,13 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
         how="left",
     )
     resumen["count_meses_sin_cobro"] = resumen["count_meses_sin_cobro"].fillna(0).astype(int)
+
+    if not incrementos.empty:
+        resumen = resumen.merge(incrementos, on=group_cols, how="left")
+    else:
+        resumen["mes_incremento_fda"] = None
+        resumen["mes_incremento_aud"] = None
+        resumen["diferencia_meses"] = None
 
     resumen = resumen.merge(sumas_cobro, on=group_cols, how="left")
     for c in [
@@ -359,6 +484,9 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
         "estatus_cobro",
         "acta_entrega",
         "count_meses_sin_cobro",
+        "mes_incremento_fda",
+        "mes_incremento_aud",
+        "diferencia_meses",
     ]
     presentes = [c for c in orden if c in resumen.columns]
     resto = [c for c in resumen.columns if c not in presentes]
@@ -374,7 +502,7 @@ def generar_resumen_desde_fuente() -> pd.DataFrame:
     """
     clientes, contratos, inpc = load_all()
     detalle = generar_detalle_todos(contratos, clientes, inpc)
-    return generar_resumen(detalle)
+    return generar_resumen(detalle, clientes, contratos)
 
 
 def aplicar_presentacion_resumen(

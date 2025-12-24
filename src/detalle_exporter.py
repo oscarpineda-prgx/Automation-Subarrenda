@@ -233,16 +233,32 @@ def _diff_meses(fecha_a: Optional[pd.Timestamp], fecha_b: Optional[pd.Timestamp]
     return abs(int(meses))
 
 def _calcular_total_diferencia(df_detalle: pd.DataFrame) -> Optional[float]:
-    """Suma diferencia_base_vs_aud solo donde importe_renta_c > 0."""
-    if "importe_renta_c" not in df_detalle.columns or "diferencia_base_vs_aud" not in df_detalle.columns:
+    """
+    Suma diferencia_base_vs_aud desde la primera hasta la ultima fecha con cobro (>0).
+    Si no hay fecha valida, cae al comportamiento previo (solo suma filas con cobro).
+    """
+    req_cols = {"importe_renta_c", "diferencia_base_vs_aud"}
+    if not req_cols.issubset(df_detalle.columns):
         return None
 
     renta = pd.to_numeric(df_detalle["importe_renta_c"], errors="coerce").fillna(0)
-    diferencia = pd.to_numeric(df_detalle["diferencia_base_vs_aud"], errors="coerce")
-    filtro = diferencia[renta > 0]
-    if filtro.empty:
+    diferencia = pd.to_numeric(df_detalle["diferencia_base_vs_aud"], errors="coerce").fillna(0)
+    cobros_mask = renta > 0
+    if not cobros_mask.any():
         return 0.0
-    return float(filtro.sum())
+
+    if "fecha" not in df_detalle.columns:
+        return float(diferencia[cobros_mask].sum())
+
+    fechas = pd.to_datetime(df_detalle["fecha"], errors="coerce")
+    cobros_validos = cobros_mask & fechas.notna()
+    if not cobros_validos.any():
+        return float(diferencia[cobros_mask].sum())
+
+    fecha_inicio = fechas[cobros_validos].min()
+    fecha_fin = fechas[cobros_validos].max()
+    en_rango = fechas.between(fecha_inicio, fecha_fin)
+    return float(diferencia[en_rango.fillna(False)].sum())
 
 
 def _inserta_encabezado_presentacion(
@@ -461,6 +477,13 @@ def exportar_detalles_individuales(
         mes_primer_cobro = int(pd.to_datetime(fecha_primer_cobro).month) if fecha_primer_cobro is not None else None
         diferencia_cobro = _diff_meses(fecha_firma, fecha_primer_cobro)
 
+        # Limitar registros al 31/05/2025 en la tabla de detalle
+        df_filtrado = df_grp.copy()
+        if "fecha" in df_filtrado.columns:
+            max_fecha = pd.Timestamp(year=2025, month=5, day=31)
+            fechas = pd.to_datetime(df_filtrado["fecha"], errors="coerce")
+            df_filtrado = df_filtrado[fechas <= max_fecha]
+
         if orden_val is not None:
             nombre_archivo = (
                 f"{_sanitizar_nombre_archivo(str(orden_val))}_"
@@ -470,7 +493,7 @@ def exportar_detalles_individuales(
         else:
             nombre_archivo = f"{_sanitizar_nombre_archivo(rfc)}_{_sanitizar_nombre_archivo(subarrendatario)}.xlsx"
         ruta = os.path.join(output_dir, nombre_archivo)
-        df_sorted = df_grp.sort_values("fecha") if "fecha" in df_grp.columns else df_grp
+        df_sorted = df_filtrado.sort_values("fecha") if "fecha" in df_filtrado.columns else df_filtrado
         df_sorted.to_excel(ruta, index=False)
 
         total_diferencia = _calcular_total_diferencia(df_sorted)

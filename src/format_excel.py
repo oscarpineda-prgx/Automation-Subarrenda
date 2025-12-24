@@ -28,6 +28,8 @@ _MONEY_KEYS = [
 
 def _looks_money(header: str) -> bool:
     h = header.lower()
+    if h == "diferencia_meses":
+        return False
     return any(k in h for k in _MONEY_KEYS)
 
 

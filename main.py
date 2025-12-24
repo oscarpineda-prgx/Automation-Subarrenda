@@ -26,7 +26,7 @@ def main():
     print(f"Detalle guardado en {output_path_detalle}")
 
     # Generar y guardar resumen
-    resumen = generar_resumen(detalle)
+    resumen = generar_resumen(detalle, clientes, contratos)
     output_path_resumen = "data/output/resumen_subarrendatarios.xlsx"
     resumen.to_excel(output_path_resumen, index=False)
     print(f"Resumen guardado en {output_path_resumen}")
