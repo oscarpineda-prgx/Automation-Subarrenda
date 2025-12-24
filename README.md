@@ -8,7 +8,7 @@ Herramienta en Python para automatizar el calculo y presentacion de reportes de 
 - Compara contra la base del cliente (renta/mtto facturado) y calcula diferencias.
 - Exporta:
   - `data/output/detalle_subarrendatarios.xlsx` (consolidado).
-  - `data/output/detalle_individual/*.xlsx` (uno por RFC + subarrendatario, con logo y tablas laterales).
+  - `data/output/detalle_individual/*.xlsx` (uno por contrato: ORDEN + RFC + subarrendatario, con logo y tablas laterales).
   - `data/output/resumen_subarrendatarios.xlsx` (resumen ejecutivo, con logo y titulo).
 
 ## Requisitos
@@ -20,8 +20,9 @@ Herramienta en Python para automatizar el calculo y presentacion de reportes de 
 
 | Archivo | Uso principal | Columnas clave (normalizadas) |
 | --- | --- | --- |
-| `base_cliente.xlsx` | Montos facturados y mes FDA | `ano`, `mes2` (mes de cobro), `mes3` (mes incremento FDA), `rfc`, `cliente`/`nombre_del_subarrendatario`, `importe_renta`, `importe_mtto` |
-| `base_contratos.xlsx` | Fechas y montos de contrato auditoria | `fecha_de_firma_del_contrato`, `fecha_de_terminacion_del_contrato`, `rfc_del_subarrendatario`, `nombre_del_subarrendatario`, `superficie_del_inmueble`, `direccion_del_inmueble`, `monto_de_renta_mensual`, `cuota_de_mantenimiento` |
+| `base_cliente.xlsx` | Montos facturados y mes FDA | `ano`, `mes2` (mes de cobro), `mes3` (mes incremento FDA), `rfc`, `cliente`, `plaza`, `sucursal`, `importe_renta`, `importe_mtto` |
+| `base_contratos.xlsx` | Fechas y montos de contrato auditoria (por contrato) | `orden`, `fecha_de_firma_del_contrato`, `fecha_de_terminacion_del_contrato`, `rfc_del_subarrendatario`, `nombre_del_subarrendatario`, `superficie_del_inmueble`, `direccion_del_inmueble`, `monto_de_renta_mensual`, `cuota_de_mantenimiento` |
+| `coincidencia.xlsx` | Mapa para asignar ORDEN a base_cliente | `rfc`, `cliente`, `plaza`, `sucursal`, `orden` |
 | `base_inpc.xlsx` | Porcentajes INPC mensuales | `fecha`, `%` (o columna con porcentaje), `mes`, `anio` |
 | `Picture1.png` | Logo para encabezados | Imagen insertada en resumen y detalles individuales |
 
@@ -62,22 +63,22 @@ python main.py
 | Modulo | Rol |
 | --- | --- |
 | `main.py` | Orquestador: carga datos, genera detalle y resumen, exporta archivos, aplica formato y presentacion. |
-| `src/loader.py` | Lectura de bases de clientes/contratos/INPC; normaliza nombres (trim, minusculas, guiones bajos, sin acentos) y convierte fechas. |
-| `src/detalle_builder.py` | Genera detalle mensual: fechas mes a mes, renta auditada ajustada por INPC (aniversario usa INPC de dos meses antes), mantenimiento, subtotal y total con IVA; cruza con base cliente por ano/mes/RFC y calcula diferencias. |
-| `src/detalle_exporter.py` | Crea un Excel por RFC + subarrendatario con logo, total de diferencia, tabla de meses de incremento (FDA vs auditoria) y tabla de fechas (firma vs primer cobro). |
-| `src/resumen_builder.py` | Agrupa por RFC + subarrendatario: sumas de mtto/subtotales/totales solo donde hay cobro, primer importe > 0, banderas SI/NO HAY COBRO, necesidad de acta de entrega, meses sin cobro; renombra y ordena columnas y agrega presentacion al resumen. |
+| `src/loader.py` | Lectura de bases de clientes/contratos/INPC; normaliza nombres (trim, minusculas, guiones bajos, sin acentos) y convierte fechas. También agrega `orden` a `base_cliente` usando `coincidencia.xlsx`. |
+| `src/detalle_builder.py` | Genera detalle mensual por contrato (`orden`): fechas mes a mes, renta auditada ajustada por INPC (aniversario usa INPC de dos meses antes), mantenimiento, subtotal y total con IVA; cruza con base cliente por ano/mes/ORDEN (fallback ano/mes/RFC) y calcula diferencias. |
+| `src/detalle_exporter.py` | Crea un Excel por contrato (ORDEN + RFC + subarrendatario) con logo, total de diferencia, tabla de meses de incremento (FDA vs auditoria) y tabla de fechas (firma vs primer cobro). |
+| `src/resumen_builder.py` | Agrupa por contrato (`orden`, RFC, subarrendatario): sumas de mtto/subtotales/totales solo donde hay cobro, primer importe > 0, banderas SI/NO HAY COBRO, necesidad de acta de entrega, meses sin cobro; renombra y ordena columnas y agrega presentacion al resumen. |
 | `src/format_excel.py` | Formato uniforme: oculta cuadricula, fechas `mm/dd/yyyy`, formato contable para montos, encabezados azul con texto blanco. |
 
 ## Reglas de negocio clave
 - Ajuste INPC: la renta auditada sube en cada aniversario (mes de firma), usando el INPC de dos meses antes.
 - Mantenimiento: `importe_mtto_auditoria = renta_auditoria * cuota_mantenimiento`; `total_a = subtotal_a * 1.16`.
-- Cruce con clientes: busca por `ano` + `mes2` + `rfc`; faltantes se tratan como 0; `diferencia_base_vs_aud = total_c - total_a`.
+- Cruce con clientes: busca por `ano` + `mes2` + `orden` (si existe), con fallback a `ano` + `mes2` + `rfc`; faltantes se tratan como 0; `diferencia_base_vs_aud = total_c - total_a`.
 - Acta de entrega: Necesaria si auditoria sube en aniversario y cliente no sube ese mes; Innecesaria si ambos suben; Desconocida si faltan datos.
 - Meses sin cobro: cuenta meses sin importe_renta_c > 0 entre el primer y ultimo cobro.
 
 ## Salidas
 - `data/output/detalle_subarrendatarios.xlsx`: detalle mensual consolidado.
-- `data/output/detalle_individual/*.xlsx`: un archivo por RFC + subarrendatario con tablas laterales y formato.
+- `data/output/detalle_individual/*.xlsx`: un archivo por contrato (ORDEN + RFC + subarrendatario) con tablas laterales y formato.
 - `data/output/resumen_subarrendatarios.xlsx`: resumen ejecutivo con logo y titulo.
 - (Opcional) `data/output/Documentacion_Proyecto_Subarrenda.docx`: documento tecnico generado con python-docx.
 

@@ -16,18 +16,20 @@ from detalle_builder import generar_detalle_todos
 
 def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
     """
-    Genera un resumen agrupando por RFC y subarrendatario.
-    - Agrupa por rfc y subarrendatario.
+    Genera un resumen por contrato.
+    - Si existe columna `orden`, agrupa por (orden, rfc, subarrendatario).
+    - Si no existe, mantiene compatibilidad agrupando por (rfc, subarrendatario).
     - Suma diferencia_base_vs_aud.
     - Agrega sumas de mtto/subtotales/totales solo sobre filas con cobro (importe_renta_c > 0).
     - Incluye cuota de mantenimiento (%).
     - Incluye el primer importe_renta_c > 0 y el primer importe_renta_auditoria > 0 (o 0 si no existen).
     - Marca si hay cobro (importe_renta_c > 0 en alguna fila) o NO HAY COBRO.
-    - No elimina RFC duplicados si el subarrendatario difiere (clave = rfc + subarrendatario).
+    - No colapsa contratos con mismo RFC/cliente cuando existe `orden`.
     """
     if detalle.empty:
         return pd.DataFrame(
             columns=[
+                "orden",
                 "rfc",
                 "subarrendatario",
                 "area",
@@ -51,9 +53,13 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
             ]
         )
 
+    group_cols = ["rfc", "subarrendatario"]
+    if "orden" in detalle.columns:
+        group_cols = ["orden", "rfc", "subarrendatario"]
+
     def _primer_importe(df_base: pd.DataFrame, columna: str) -> pd.Series:
         """
-        Devuelve serie con el primer valor > 0 por rfc/subarrendatario para la columna indicada.
+        Devuelve serie con el primer valor > 0 por contrato (group_cols) para la columna indicada.
         Si no hay valores > 0, devuelve 0.
         """
         if columna not in df_base.columns:
@@ -66,7 +72,7 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
         )
         serie = (
             ordenado[ordenado[columna] > 0]
-            .groupby(["rfc", "subarrendatario"])[columna]
+            .groupby(group_cols)[columna]
             .first()
             .round(2)
         )
@@ -81,9 +87,8 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
         Suma importes solo en filas con cobro (importe_renta_c > 0).
         Devuelve dataframe con columnas de sumas y cuota de mantenimiento.
         """
-        cols = [
-            "rfc",
-            "subarrendatario",
+        key_cols = group_cols
+        cols = key_cols + [
             "importe_mtto_c_cobro_sum",
             "importe_mtto_auditoria_cobro_sum",
             "subtotal_c_cobro_sum",
@@ -95,7 +100,7 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
         if df_base.empty:
             return pd.DataFrame(columns=cols)
 
-        claves = df_base[["rfc", "subarrendatario"]].drop_duplicates()
+        claves = df_base[key_cols].drop_duplicates()
 
         con_cobro = df_base[df_base["importe_renta_c"].fillna(0) > 0].copy()
         sumas = (
@@ -107,7 +112,7 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
                 total_c=lambda d: pd.to_numeric(d.get("total_c", 0), errors="coerce").fillna(0),
                 total_a=lambda d: pd.to_numeric(d.get("total_a", 0), errors="coerce").fillna(0),
             )
-            .groupby(["rfc", "subarrendatario"])
+            .groupby(group_cols)
             .agg(
                 importe_mtto_c_cobro_sum=("importe_mtto_c", "sum"),
                 importe_mtto_auditoria_cobro_sum=("importe_mtto_auditoria", "sum"),
@@ -119,18 +124,20 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
             .reset_index()
         )
 
-        # Cuota por RFC (solo RFC, sin depender de que haya cobro)
-        cuota_map = None
-        if "cuota_mantenimiento" in df_base.columns:
-            cuota_map = (
-                df_base.assign(cuota_mantenimiento=lambda d: pd.to_numeric(d["cuota_mantenimiento"], errors="coerce"))
-                .groupby("rfc")["cuota_mantenimiento"]
-                .first()
-            )
-
         # Ensamblar con todas las claves rfc+subarrendatario
-        sumas = claves.merge(sumas, on=["rfc", "subarrendatario"], how="left")
-        sumas["cuota_mantenimiento_pct"] = sumas["rfc"].map(cuota_map) if cuota_map is not None else None
+        sumas = claves.merge(sumas, on=key_cols, how="left")
+
+        # Cuota por contrato (no depende de que haya cobro)
+        if "cuota_mantenimiento" in df_base.columns:
+            cuota_df = (
+                df_base.assign(cuota_mantenimiento=lambda d: pd.to_numeric(d["cuota_mantenimiento"], errors="coerce"))
+                .groupby(key_cols, as_index=False)["cuota_mantenimiento"]
+                .first()
+                .rename(columns={"cuota_mantenimiento": "cuota_mantenimiento_pct"})
+            )
+            sumas = sumas.merge(cuota_df, on=key_cols, how="left")
+        else:
+            sumas["cuota_mantenimiento_pct"] = None
 
         for col in cols:
             if col not in sumas.columns:
@@ -184,7 +191,7 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
                 return "Necesaria"
             return "Desconocida"
 
-        res = df_base.groupby(["rfc", "subarrendatario"]).apply(evaluar)
+        res = df_base.groupby(group_cols).apply(evaluar)
         res.name = "acta_entrega"
         return res
 
@@ -209,7 +216,7 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
             rango = vals.loc[start:end]
             return int((rango <= 0).sum())
 
-        res = df_base.groupby(["rfc", "subarrendatario"]).apply(contar)
+        res = df_base.groupby(group_cols).apply(contar)
         res.name = "count_meses_sin_cobro"
         return res
 
@@ -227,15 +234,15 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
 
     if agregados:
         contrato_info = (
-            detalle.groupby(["rfc", "subarrendatario"])
+            detalle.groupby(group_cols)
             .agg(**agregados)
             .reset_index()
         )
     else:
-        contrato_info = pd.DataFrame(columns=["rfc", "subarrendatario"])
+        contrato_info = pd.DataFrame(columns=group_cols)
 
     # Base completa de claves rfc + subarrendatario (no se eliminan duplicados de RFC con nombres distintos)
-    claves = detalle[["rfc", "subarrendatario"]].drop_duplicates()
+    claves = detalle[group_cols].drop_duplicates()
 
     # Agrupa diferencia solo con cobro, pero mantiene todas las claves (resto queda en 0)
     # La diferencia solo se suma donde importe_renta_c > 0; si no hay cobro, queda 0.
@@ -244,31 +251,31 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
     ].copy()
     diferencia_sum = (
         df_dif.fillna({"diferencia_base_vs_aud": 0})
-        .groupby(["rfc", "subarrendatario"], as_index=False)["diferencia_base_vs_aud"]
+        .groupby(group_cols, as_index=False)["diferencia_base_vs_aud"]
         .sum()
         .rename(columns={"diferencia_base_vs_aud": "diferencia_base_vs_aud_sum"})
     )
     diferencia_sum = claves.merge(
-        diferencia_sum, on=["rfc", "subarrendatario"], how="left"
+        diferencia_sum, on=group_cols, how="left"
     ).fillna({"diferencia_base_vs_aud_sum": 0})
     # Bandera de cobro: si existe al menos un importe_renta_c > 0
     estatus = (
         detalle.fillna({"importe_renta_c": 0})
         .assign(tiene_cobro=lambda d: d["importe_renta_c"] > 0)
-        .groupby(["rfc", "subarrendatario"])["tiene_cobro"]
+        .groupby(group_cols)["tiene_cobro"]
         .any()
         .replace({True: "SI HAY COBRO", False: "NO HAY COBRO"})
     )
 
     resumen = diferencia_sum
     resumen = resumen.merge(
-        primeros_cliente.rename("primer_importe_renta_c"),
-        on=["rfc", "subarrendatario"],
+        primeros_cliente.rename("primer_importe_renta_c").reset_index(),
+        on=group_cols,
         how="left",
     )
     resumen = resumen.merge(
-        primeros_auditoria.rename("primer_importe_renta_auditoria"),
-        on=["rfc", "subarrendatario"],
+        primeros_auditoria.rename("primer_importe_renta_auditoria").reset_index(),
+        on=group_cols,
         how="left",
     )
     resumen["primer_importe_renta_c"] = resumen[
@@ -278,23 +285,23 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
         "primer_importe_renta_auditoria"
     ].fillna(0)
     resumen = resumen.merge(
-        estatus.rename("estatus_cobro"), on=["rfc", "subarrendatario"], how="left"
+        estatus.rename("estatus_cobro").reset_index(), on=group_cols, how="left"
     )
     resumen["estatus_cobro"] = resumen["estatus_cobro"].fillna("NO HAY COBRO")
 
     resumen = resumen.merge(
-        acta, on=["rfc", "subarrendatario"], how="left"
+        acta.reset_index(), on=group_cols, how="left"
     )
     resumen["acta_entrega"] = resumen["acta_entrega"].fillna("Desconocida")
 
     resumen = resumen.merge(
-        count_meses.rename("count_meses_sin_cobro"),
-        on=["rfc", "subarrendatario"],
+        count_meses.rename("count_meses_sin_cobro").reset_index(),
+        on=group_cols,
         how="left",
     )
     resumen["count_meses_sin_cobro"] = resumen["count_meses_sin_cobro"].fillna(0).astype(int)
 
-    resumen = resumen.merge(sumas_cobro, on=["rfc", "subarrendatario"], how="left")
+    resumen = resumen.merge(sumas_cobro, on=group_cols, how="left")
     for c in [
         "importe_mtto_c_cobro_sum",
         "importe_mtto_auditoria_cobro_sum",
@@ -309,7 +316,7 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
         resumen["cuota_mantenimiento_pct"] = resumen["cuota_mantenimiento_pct"].round(4)
 
     if not contrato_info.empty:
-        resumen = resumen.merge(contrato_info, on=["rfc", "subarrendatario"], how="left")
+        resumen = resumen.merge(contrato_info, on=group_cols, how="left")
 
     # Renombrar columnas a los alias solicitados por el usuario
     column_renames = {
@@ -331,6 +338,7 @@ def generar_resumen(detalle: pd.DataFrame) -> pd.DataFrame:
 
     # Reordenar columnas segun solicitud
     orden = [
+        "orden",
         "rfc",
         "subarrendatario",
         "area",

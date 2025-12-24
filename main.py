@@ -17,7 +17,7 @@ def main():
     print("Detalle (todos los subarrendatarios):\n", detalle.head(), "\n")
     print("Filas totales en detalle:", len(detalle))
 
-    # Generar detalle individual por RFC + cliente
+    # Generar detalle individual por contrato (ORDEN + RFC + cliente)
     exportar_detalles_individuales(detalle, clientes, contratos)
 
     # Guardar a Excel en data/output

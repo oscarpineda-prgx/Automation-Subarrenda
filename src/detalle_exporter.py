@@ -64,11 +64,12 @@ def _coerce_mes(val) -> Optional[int]:
 
 
 def _buscar_mes_fda(df_clientes: Optional[pd.DataFrame], rfc: str, subarrendatario: str) -> Tuple[Optional[int], Optional[str]]:
-    """Busca el mes de incremento FDA en base_clientes por RFC (y cliente si existe). Usa solo columna mes3."""
+    """Fallback: Busca el mes de incremento FDA en base_clientes por RFC (y cliente si existe). Usa solo mes3."""
     if df_clientes is None or df_clientes.empty:
         return None, None
 
     df = df_clientes.copy()
+
     df["rfc_key"] = df["rfc"].astype(str).str.strip().str.upper() if "rfc" in df.columns else ""
     df["cliente_key"] = ""
     if "cliente" in df.columns:
@@ -96,8 +97,36 @@ def _buscar_mes_fda(df_clientes: Optional[pd.DataFrame], rfc: str, subarrendatar
     return None, None
 
 
+def _buscar_mes_fda_por_orden(
+    df_clientes: Optional[pd.DataFrame],
+    orden,
+    rfc: str,
+    subarrendatario: str,
+) -> Tuple[Optional[int], Optional[str]]:
+    """Busca mes FDA por orden si está disponible; si no hay match, hace fallback al método anterior."""
+    if df_clientes is None or df_clientes.empty:
+        return None, None
+    df = df_clientes.copy()
+    if "orden" not in df.columns:
+        return _buscar_mes_fda(df_clientes, rfc, subarrendatario)
+
+    ord_key = pd.to_numeric(orden, errors="coerce")
+    df["orden_key"] = pd.to_numeric(df["orden"], errors="coerce")
+    filtrado = df[df["orden_key"] == ord_key] if pd.notna(ord_key) else pd.DataFrame()
+    if filtrado.empty:
+        return _buscar_mes_fda(df_clientes, rfc, subarrendatario)
+
+    if "mes3" not in filtrado.columns:
+        return None, None
+    for val in filtrado["mes3"]:
+        mes_num = _coerce_mes(val)
+        if mes_num:
+            return mes_num, _mes_a_texto(mes_num)
+    return None, None
+
+
 def _buscar_fecha_firma(df_contratos: Optional[pd.DataFrame], rfc: str, subarrendatario: str) -> Optional[pd.Timestamp]:
-    """Devuelve la fecha de firma del contrato (auditoria) por RFC + subarrendatario."""
+    """Devuelve la fecha de firma del contrato (auditoria) por RFC + subarrendatario (fallback)."""
     if df_contratos is None or df_contratos.empty:
         return None
 
@@ -124,9 +153,50 @@ def _buscar_fecha_firma(df_contratos: Optional[pd.DataFrame], rfc: str, subarren
     return fechas.iloc[0]
 
 
+def _buscar_fecha_firma_por_orden(
+    df_contratos: Optional[pd.DataFrame],
+    orden,
+    rfc: str,
+    subarrendatario: str,
+) -> Optional[pd.Timestamp]:
+    """Devuelve la fecha de firma del contrato (auditoria) por orden; fallback RFC/cliente."""
+    if df_contratos is None or df_contratos.empty:
+        return None
+    df = df_contratos.copy()
+    if "orden" not in df.columns:
+        return _buscar_fecha_firma(df_contratos, rfc, subarrendatario)
+
+    ord_key = pd.to_numeric(orden, errors="coerce")
+    df["orden_key"] = pd.to_numeric(df["orden"], errors="coerce")
+    filtrado = df[df["orden_key"] == ord_key] if pd.notna(ord_key) else pd.DataFrame()
+    if filtrado.empty:
+        return _buscar_fecha_firma(df_contratos, rfc, subarrendatario)
+
+    if "fecha_de_firma_del_contrato" not in filtrado.columns:
+        return None
+    fechas = pd.to_datetime(filtrado["fecha_de_firma_del_contrato"], errors="coerce").dropna()
+    if fechas.empty:
+        return None
+    return fechas.iloc[0]
+
+
 def _buscar_mes_auditoria(df_contratos: Optional[pd.DataFrame], rfc: str, subarrendatario: str) -> Tuple[Optional[int], Optional[str]]:
-    """Toma el mes de la fecha de firma del contrato (auditoria) por RFC + subarrendatario."""
+    """Toma el mes de la fecha de firma del contrato (auditoria) por RFC + subarrendatario (fallback)."""
     fecha = _buscar_fecha_firma(df_contratos, rfc, subarrendatario)
+    if fecha is None:
+        return None, None
+    mes_num = int(pd.to_datetime(fecha).month)
+    return mes_num, _mes_a_texto(mes_num)
+
+
+def _buscar_mes_auditoria_por_orden(
+    df_contratos: Optional[pd.DataFrame],
+    orden,
+    rfc: str,
+    subarrendatario: str,
+) -> Tuple[Optional[int], Optional[str]]:
+    """Toma el mes de la fecha de firma del contrato (auditoria) por orden; fallback RFC/cliente."""
+    fecha = _buscar_fecha_firma_por_orden(df_contratos, orden, rfc, subarrendatario)
     if fecha is None:
         return None, None
     mes_num = int(pd.to_datetime(fecha).month)
@@ -180,6 +250,7 @@ def _inserta_encabezado_presentacion(
     rfc: str,
     subarrendatario: str,
     total_diferencia: Optional[float],
+    orden: Optional[int] = None,
     logo_path: str = "data/input/Picture1.png",
 ) -> None:
     """Inserta logo, titulos y total de diferencia en la parte superior de la hoja."""
@@ -207,7 +278,10 @@ def _inserta_encabezado_presentacion(
     titulo.alignment = Alignment(horizontal="center")
     ws.merge_cells(start_row=3, start_column=6, end_row=3, end_column=13)
 
-    subtitulo_txt = f"{str(rfc).strip()} - {str(subarrendatario).strip()}"
+    if orden is not None and not pd.isna(orden):
+        subtitulo_txt = f"ORDEN {int(orden)} - {str(rfc).strip()} - {str(subarrendatario).strip()}"
+    else:
+        subtitulo_txt = f"{str(rfc).strip()} - {str(subarrendatario).strip()}"
     subtitulo = ws.cell(row=4, column=6, value=subtitulo_txt)
     subtitulo.font = Font(bold=True, size=12)
     subtitulo.alignment = Alignment(horizontal="center")
@@ -332,7 +406,7 @@ def exportar_detalles_individuales(
     aplicar_formato: bool = True,
 ) -> List[str]:
     """
-    Genera un archivo Excel por cada subarrendatario (clave RFC + subarrendatario) y agrega
+    Genera un archivo Excel por cada contrato (clave ORDEN) y agrega
     dos tablas: meses de incremento (FDA vs auditoria) y fechas (firma vs primer cobro).
     """
     if detalle.empty:
@@ -347,27 +421,54 @@ def exportar_detalles_individuales(
     base["rfc"] = base["rfc"].astype(str).str.strip()
     base["subarrendatario"] = base["subarrendatario"].astype(str).str.strip()
     base = base[(base["rfc"] != "") & (base["subarrendatario"] != "")]
+
+    usar_orden = "orden" in base.columns
+    if usar_orden:
+        base["orden"] = pd.to_numeric(base["orden"], errors="coerce")
+        base = base.dropna(subset=["orden"])
     if base.empty:
         print("No hay registros con RFC y subarrendatario para exportar.")
         return []
 
     rutas = []
-    for (rfc, subarrendatario), df_grp in base.groupby(["rfc", "subarrendatario"]):
-        # Datos auxiliares (mes FDA vs auditoria, fechas y diferencias) por cada RFC/subarrendatario
-        mes_fda_num, mes_fda_txt = _buscar_mes_fda(df_clientes, rfc, subarrendatario)
-        mes_aud_num, mes_aud_txt = _buscar_mes_auditoria(df_contratos, rfc, subarrendatario)
+    if usar_orden:
+        group_iter = base.groupby(["orden"], dropna=True)
+    else:
+        group_iter = base.groupby(["rfc", "subarrendatario"])
+
+    for key, df_grp in group_iter:
+        if usar_orden:
+            orden_val = int(pd.to_numeric(key, errors="coerce"))
+            rfc = str(df_grp["rfc"].iloc[0]).strip()
+            subarrendatario = str(df_grp["subarrendatario"].iloc[0]).strip()
+            mes_fda_num, mes_fda_txt = _buscar_mes_fda_por_orden(df_clientes, orden_val, rfc, subarrendatario)
+            mes_aud_num, mes_aud_txt = _buscar_mes_auditoria_por_orden(df_contratos, orden_val, rfc, subarrendatario)
+            fecha_firma = _buscar_fecha_firma_por_orden(df_contratos, orden_val, rfc, subarrendatario)
+        else:
+            orden_val = None
+            rfc, subarrendatario = key
+            mes_fda_num, mes_fda_txt = _buscar_mes_fda(df_clientes, rfc, subarrendatario)
+            mes_aud_num, mes_aud_txt = _buscar_mes_auditoria(df_contratos, rfc, subarrendatario)
+            fecha_firma = _buscar_fecha_firma(df_contratos, rfc, subarrendatario)
+
         diferencia = (
             abs(int(mes_fda_num) - int(mes_aud_num))
             if mes_fda_num is not None and mes_aud_num is not None
             else None
         )
-        fecha_firma = _buscar_fecha_firma(df_contratos, rfc, subarrendatario)
         mes_firma = int(pd.to_datetime(fecha_firma).month) if fecha_firma is not None else None
         fecha_primer_cobro = _buscar_fecha_primer_cobro(df_grp)
         mes_primer_cobro = int(pd.to_datetime(fecha_primer_cobro).month) if fecha_primer_cobro is not None else None
         diferencia_cobro = _diff_meses(fecha_firma, fecha_primer_cobro)
 
-        nombre_archivo = f"{_sanitizar_nombre_archivo(rfc)}_{_sanitizar_nombre_archivo(subarrendatario)}.xlsx"
+        if orden_val is not None:
+            nombre_archivo = (
+                f"{_sanitizar_nombre_archivo(str(orden_val))}_"
+                f"{_sanitizar_nombre_archivo(rfc)}_"
+                f"{_sanitizar_nombre_archivo(subarrendatario)}.xlsx"
+            )
+        else:
+            nombre_archivo = f"{_sanitizar_nombre_archivo(rfc)}_{_sanitizar_nombre_archivo(subarrendatario)}.xlsx"
         ruta = os.path.join(output_dir, nombre_archivo)
         df_sorted = df_grp.sort_values("fecha") if "fecha" in df_grp.columns else df_grp
         df_sorted.to_excel(ruta, index=False)
@@ -386,6 +487,7 @@ def exportar_detalles_individuales(
                 rfc=rfc,
                 subarrendatario=subarrendatario,
                 total_diferencia=total_diferencia,
+                orden=orden_val,
             )
 
             start_col = _agregar_tabla_incrementos(

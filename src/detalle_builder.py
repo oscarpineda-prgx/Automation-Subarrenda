@@ -86,27 +86,55 @@ def _normalizar_clave_merge(df, col):
 
 def anexar_importe_renta_mtto_clientes(detalle, clientes):
     """
-    Cruza contra base de clientes por ano, mes y rfc, y agrega importe_renta_c y importe_mtto_c.
+    Cruza contra base de clientes y agrega importe_renta_c y importe_mtto_c.
+
+    Prioriza cruce por `orden` (ano, mes2, orden) cuando exista en ambas bases; si no, usa
+    la lógica anterior por (ano, mes2, rfc). Si hay múltiples filas en clientes por la misma clave,
+    se agregan (sum).
     Si no hay match, asigna 0.
     """
     det = detalle.copy()
-    cli = clientes[["ano", "mes2", "rfc", "importe_renta", "importe_mtto"]].copy()
+    base_cols = ["ano", "mes2", "rfc", "importe_renta", "importe_mtto"]
+    if "orden" in clientes.columns:
+        base_cols.insert(2, "orden")
+    cli = clientes[[c for c in base_cols if c in clientes.columns]].copy()
 
     # Claves normalizadas, detalle
     det['ano_key'] = _normalizar_clave_merge(det, 'ano')
     det['mes_key'] = _normalizar_clave_merge(det, 'mes')
     det['rfc_key'] = det['rfc'].astype(str).str.strip().str.upper()
+    if "orden" in det.columns:
+        det["orden_key"] = _normalizar_clave_merge(det, "orden")
 
     # Claves normalizadas, clientes
     cli['ano_key'] = _normalizar_clave_merge(cli, 'ano')
     cli['mes_key'] = _normalizar_clave_merge(cli, 'mes2')
     cli['rfc_key'] = cli['rfc'].astype(str).str.strip().str.upper()
+    if "orden" in cli.columns:
+        cli["orden_key"] = _normalizar_clave_merge(cli, "orden")
 
-    # Merge detalle con clientes usando claves normalizadas
+    # Decide claves de cruce
+    usar_orden = "orden_key" in det.columns and "orden_key" in cli.columns
+    if usar_orden:
+        join_cols = ["ano_key", "mes_key", "orden_key", "rfc_key"]
+    else:
+        join_cols = ["ano_key", "mes_key", "rfc_key"]
+
+    # Normalizar montos y agregar si hay duplicados en clientes por clave
+    cli_amounts = (
+        cli.assign(
+            importe_renta=lambda d: pd.to_numeric(d.get("importe_renta", 0), errors="coerce").fillna(0),
+            importe_mtto=lambda d: pd.to_numeric(d.get("importe_mtto", 0), errors="coerce").fillna(0),
+        )
+        .groupby(join_cols, as_index=False)[["importe_renta", "importe_mtto"]]
+        .sum()
+    )
+
+    # Merge detalle con clientes usando claves normalizadas (ya agregadas)
     merged = det.merge(
-        cli[["ano_key", "mes_key", "rfc_key", "importe_renta", "importe_mtto"]],
-        on=['ano_key','mes_key','rfc_key'],
-        how='left'
+        cli_amounts,
+        on=join_cols,
+        how="left",
     )
     # Montos del cliente; si no hay match se van a 0
     merged['importe_renta_c'] = pd.to_numeric(merged['importe_renta'], errors='coerce').fillna(0).round(2)
@@ -114,7 +142,10 @@ def anexar_importe_renta_mtto_clientes(detalle, clientes):
     merged["subtotal_c"] = (merged["importe_renta_c"] + merged["importe_mtto_c"]).round(2)
     merged["total_c"] = (merged["subtotal_c"] * 1.16).round(2)
     merged["diferencia_base_vs_aud"] = (merged["total_c"] - merged["total_a"]).round(2)
-    merged = merged.drop(columns=['importe_renta', "importe_mtto", 'ano_key', 'mes_key', 'rfc_key'])
+    drop_cols = ['importe_renta', "importe_mtto", 'ano_key', 'mes_key', 'rfc_key']
+    if "orden_key" in merged.columns:
+        drop_cols.append("orden_key")
+    merged = merged.drop(columns=[c for c in drop_cols if c in merged.columns])
     return merged
 
 _MESES = ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"]
@@ -129,10 +160,9 @@ def agregar_incremento_constante(detalle, valor="INPC"):
 
 def generar_detalle_por_proveedor(df_contratos, subarrendatario, rfc_sub=None, df_inpc=None):
     """
-    Genera el detalle mensual para un subarrendatario usando df_contratos normalizado.
-    Columnas esperadas: fecha_de_firma_del_contrato, fecha_de_terminacion_del_contrato,
-    rfc_del_subarrendatario, nombre_del_subarrendatario, superficie_del_inmueble,
-    direccion_del_inmueble, monto_de_renta_mensual, cuota_de_mantenimiento.
+    Compatibilidad: Genera el detalle mensual para un subarrendatario usando df_contratos normalizado.
+
+    Nota: Cuando exista `orden` (único por contrato), se recomienda usar `generar_detalle_por_contrato`.
     """
     df_prov = df_contratos[df_contratos["nombre_del_subarrendatario"] == subarrendatario]
     if rfc_sub is not None:
@@ -140,24 +170,89 @@ def generar_detalle_por_proveedor(df_contratos, subarrendatario, rfc_sub=None, d
     if df_prov.empty:
         raise ValueError(f"Subarrendatario no encontrado: {subarrendatario} (rfc={rfc_sub})")
 
-    # Toma la primera fila para fechas
-    fecha_firma = df_prov["fecha_de_firma_del_contrato"].iloc[0]
-    # Toma la primera fila para fechas
-    fecha_terminacion = df_prov["fecha_de_terminacion_del_contrato"].iloc[0]
-    # Crea un arreglo especializado de pandas de fechas, desde la fecha inicial hasta la final
+    row = df_prov.iloc[0]
+    fecha_firma = row.get("fecha_de_firma_del_contrato")
+    fecha_terminacion = row.get("fecha_de_terminacion_del_contrato")
     fechas = generar_fechas_mensuales(fecha_firma, fecha_terminacion)
     if len(fechas) == 0:
-        raise ValueError(f"Fechas inválidas para {subarrendatario}: inicio={fecha_firma}, fin={fecha_terminacion}")
+        raise ValueError(
+            f"Fechas inválidas para {subarrendatario}: inicio={fecha_firma}, fin={fecha_terminacion}"
+        )
 
     df_detalle = pd.DataFrame({"fecha": fechas})
     df_detalle["ano"] = df_detalle["fecha"].dt.year
     df_detalle["mes"] = df_detalle["fecha"].dt.month
-    df_detalle["rfc"] = df_prov["rfc_del_subarrendatario"].iloc[0]
-    df_detalle["subarrendatario"] = df_prov["nombre_del_subarrendatario"].iloc[0]
-    df_detalle["area"] = df_prov["superficie_del_inmueble"].iloc[0]
-    df_detalle["direccion_inmueble"] = df_prov["direccion_del_inmueble"].iloc[0]
-    renta = pd.to_numeric(df_prov["monto_de_renta_mensual"].iloc[0], errors="coerce")
-    cuota = pd.to_numeric(df_prov["cuota_de_mantenimiento"].iloc[0], errors="coerce")
+    if "orden" in row.index and pd.notna(row.get("orden")):
+        try:
+            df_detalle["orden"] = int(pd.to_numeric(row.get("orden"), errors="coerce"))
+        except Exception:
+            df_detalle["orden"] = row.get("orden")
+    df_detalle["rfc"] = row.get("rfc_del_subarrendatario")
+    df_detalle["subarrendatario"] = row.get("nombre_del_subarrendatario")
+    df_detalle["area"] = row.get("superficie_del_inmueble")
+    df_detalle["direccion_inmueble"] = row.get("direccion_del_inmueble")
+
+    renta = pd.to_numeric(row.get("monto_de_renta_mensual"), errors="coerce")
+    cuota = pd.to_numeric(row.get("cuota_de_mantenimiento"), errors="coerce")
+    renta = 0 if pd.isna(renta) else renta
+    cuota = 0 if pd.isna(cuota) else cuota
+
+    df_detalle["importe_renta_auditoria"] = calcular_renta_auditoria_con_inpc(
+        df_detalle["fecha"], renta, df_inpc
+    )
+    df_detalle["cuota_mantenimiento"] = cuota
+
+    df_detalle = calcular_subtotal_a(df_detalle)
+    df_detalle = calcular_total_a(df_detalle)
+    for col in ["importe_renta_auditoria", "importe_mtto_auditoria", "subtotal_a", "total_a"]:
+        if col in df_detalle.columns:
+            df_detalle[col] = df_detalle[col].round(2)
+    return df_detalle
+
+
+def generar_detalle_por_contrato(df_contratos, orden, df_inpc=None):
+    """
+    Genera el detalle mensual para un contrato usando df_contratos normalizado.
+    La clave principal es `orden` (única por contrato).
+
+    Columnas esperadas: fecha_de_firma_del_contrato, fecha_de_terminacion_del_contrato,
+    rfc_del_subarrendatario, nombre_del_subarrendatario, superficie_del_inmueble,
+    direccion_del_inmueble, monto_de_renta_mensual, cuota_de_mantenimiento.
+    """
+    if "orden" not in df_contratos.columns:
+        raise ValueError("df_contratos no contiene columna 'orden'.")
+
+    df = df_contratos.copy()
+    df["orden_key"] = pd.to_numeric(df["orden"], errors="coerce")
+    orden_key = pd.to_numeric(orden, errors="coerce")
+    if pd.isna(orden_key):
+        raise ValueError(f"Orden inválida: {orden}")
+
+    df_con = df[df["orden_key"] == orden_key]
+    if df_con.empty:
+        raise ValueError(f"Contrato no encontrado para orden={orden}")
+    if len(df_con) > 1:
+        print(f"Aviso: orden={orden} aparece {len(df_con)} veces en contratos; se usará la primera fila.")
+
+    row = df_con.iloc[0]
+
+    fecha_firma = row.get("fecha_de_firma_del_contrato")
+    fecha_terminacion = row.get("fecha_de_terminacion_del_contrato")
+    # Crea un arreglo especializado de pandas de fechas, desde la fecha inicial hasta la final
+    fechas = generar_fechas_mensuales(fecha_firma, fecha_terminacion)
+    if len(fechas) == 0:
+        raise ValueError(f"Fechas inválidas para orden={orden}: inicio={fecha_firma}, fin={fecha_terminacion}")
+
+    df_detalle = pd.DataFrame({"fecha": fechas})
+    df_detalle["ano"] = df_detalle["fecha"].dt.year
+    df_detalle["mes"] = df_detalle["fecha"].dt.month
+    df_detalle["orden"] = int(orden_key) if pd.notna(orden_key) else orden
+    df_detalle["rfc"] = row.get("rfc_del_subarrendatario")
+    df_detalle["subarrendatario"] = row.get("nombre_del_subarrendatario")
+    df_detalle["area"] = row.get("superficie_del_inmueble")
+    df_detalle["direccion_inmueble"] = row.get("direccion_del_inmueble")
+    renta = pd.to_numeric(row.get("monto_de_renta_mensual"), errors="coerce")
+    cuota = pd.to_numeric(row.get("cuota_de_mantenimiento"), errors="coerce")
     renta = 0 if pd.isna(renta) else renta
     cuota = 0 if pd.isna(cuota) else cuota
     df_detalle["importe_renta_auditoria"] = calcular_renta_auditoria_con_inpc(
@@ -176,31 +271,67 @@ def generar_detalle_por_proveedor(df_contratos, subarrendatario, rfc_sub=None, d
 
 def generar_detalle_todos(df_contratos, df_clientes=None, df_inpc=None):
     """
-    Genera el detalle mensual para todos los subarrendatarios en df_contratos.
-    Concatena los resultados de generar_detalle_por_proveedor y,
+    Genera el detalle mensual para todos los contratos en df_contratos.
+    Concatena los resultados de generar_detalle_por_contrato y,
     si se pasa df_clientes, cruza importe_renta_c y importe_mtto_c.
     """
     detalles = []
     saltados = 0
-    # Iterar por clave combinada nombre + rfc para no perder registros con el mismo nombre pero distinto RFC
-    claves = (
-        df_contratos[["nombre_del_subarrendatario", "rfc_del_subarrendatario"]]
-        .dropna(subset=["nombre_del_subarrendatario"])
-        .drop_duplicates()
-    )
-    for _, row in claves.iterrows():
-        sub = row["nombre_del_subarrendatario"]
-        rfc = row["rfc_del_subarrendatario"]
-        try:
-            detalles.append(
-                generar_detalle_por_proveedor(
-                    df_contratos, sub, rfc_sub=rfc, df_inpc=df_inpc
+
+    if "orden" in df_contratos.columns:
+        ordenes = (
+            pd.to_numeric(df_contratos["orden"], errors="coerce")
+            .dropna()
+            .astype("Int64")
+            .drop_duplicates()
+            .sort_values()
+        )
+        for orden in ordenes:
+            if pd.isna(orden):
+                continue
+            try:
+                detalles.append(
+                    generar_detalle_por_contrato(df_contratos, int(orden), df_inpc=df_inpc)
                 )
+            except ValueError as exc:
+                print(f"Saltando orden={orden}: {exc}")
+                saltados += 1
+
+        # Fallback para registros sin orden (compatibilidad)
+        sin_orden = df_contratos[pd.to_numeric(df_contratos["orden"], errors="coerce").isna()]
+        if not sin_orden.empty:
+            claves = (
+                sin_orden[["nombre_del_subarrendatario", "rfc_del_subarrendatario"]]
+                .dropna(subset=["nombre_del_subarrendatario"])
+                .drop_duplicates()
             )
-        except ValueError as exc:
-            # Omite entradas con fechas inv?lidas o datos faltantes
-            print(f"Saltando {sub}: {exc}")
-            saltados += 1
+            for _, row in claves.iterrows():
+                sub = row["nombre_del_subarrendatario"]
+                rfc = row["rfc_del_subarrendatario"]
+                try:
+                    detalles.append(
+                        generar_detalle_por_proveedor(df_contratos, sub, rfc_sub=rfc, df_inpc=df_inpc)
+                    )
+                except ValueError as exc:
+                    print(f"Saltando {sub}: {exc}")
+                    saltados += 1
+    else:
+        # Compatibilidad: clave combinada nombre + rfc
+        claves = (
+            df_contratos[["nombre_del_subarrendatario", "rfc_del_subarrendatario"]]
+            .dropna(subset=["nombre_del_subarrendatario"])
+            .drop_duplicates()
+        )
+        for _, row in claves.iterrows():
+            sub = row["nombre_del_subarrendatario"]
+            rfc = row["rfc_del_subarrendatario"]
+            try:
+                detalles.append(
+                    generar_detalle_por_proveedor(df_contratos, sub, rfc_sub=rfc, df_inpc=df_inpc)
+                )
+            except ValueError as exc:
+                print(f"Saltando {sub}: {exc}")
+                saltados += 1
     if not detalles:
         return pd.DataFrame()
     detalle = pd.concat(detalles, ignore_index=True)
@@ -209,6 +340,7 @@ def generar_detalle_todos(df_contratos, df_clientes=None, df_inpc=None):
     detalle = agregar_incremento_constante(detalle, valor="INPC")
     # Reordenar columnas finales
     orden = [
+        "orden",
         "fecha",
         "ano",
         "mes",
@@ -232,5 +364,5 @@ def generar_detalle_todos(df_contratos, df_clientes=None, df_inpc=None):
     resto = [c for c in detalle.columns if c not in presentes]
     detalle = detalle[presentes + resto]
     if saltados:
-        print(f"Total de subarrendatarios saltados por fechas inválidas o datos faltantes: {saltados}")
+        print(f"Total de contratos saltados por fechas inválidas o datos faltantes: {saltados}")
     return detalle
