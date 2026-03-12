@@ -15,8 +15,8 @@ from detalle_builder import generar_detalle_todos
 from detalle_exporter import (
     _buscar_mes_fda,
     _buscar_mes_fda_por_orden,
-    _buscar_mes_auditoria,
-    _buscar_mes_auditoria_por_orden,
+    _coerce_mes,
+    _mes_a_texto,
 )
 
 
@@ -364,16 +364,19 @@ def generar_resumen(
                 mes_fda_num, mes_fda_txt = _buscar_mes_fda_por_orden(
                     df_cli, ord_val, rfc_val, sub_val
                 )
-                mes_aud_num, mes_aud_txt = _buscar_mes_auditoria_por_orden(
-                    df_con, ord_val, rfc_val, sub_val
-                )
             else:
                 mes_fda_num, mes_fda_txt = _buscar_mes_fda(
                     df_cli, rfc_val, sub_val
                 )
-                mes_aud_num, mes_aud_txt = _buscar_mes_auditoria(
-                    df_con, rfc_val, sub_val
-                )
+            mes_aud_num = None
+            mes_aud_txt = None
+            if "mes_incremento" in grp.columns:
+                for val in grp["mes_incremento"]:
+                    mes_val = _coerce_mes(val)
+                    if mes_val:
+                        mes_aud_num = mes_val
+                        mes_aud_txt = _mes_a_texto(mes_val)
+                        break
 
             diferencia = (
                 abs(int(mes_fda_num) - int(mes_aud_num))

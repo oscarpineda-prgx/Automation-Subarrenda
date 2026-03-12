@@ -4,10 +4,10 @@ import unicodedata
 # ------------------------------------------
 #  RUTAS ABSOLUTAS EN CITRIX
 # ------------------------------------------
-ruta_clientes = r'\\amer.prgx.com\Citrix\UserHomeDir\opined01\Desktop\Automation-Subarrenda\data\input\base_cliente.xlsx'
-ruta_contratos = r'\\amer.prgx.com\Citrix\UserHomeDir\opined01\Desktop\Automation-Subarrenda\data\input\base_contratos.xlsx'
-ruta_inpc = r'\\amer.prgx.com\Citrix\UserHomeDir\opined01\Desktop\Automation-Subarrenda\data\input\base_inpc.xlsx'
-ruta_coincidencia = r'\\amer.prgx.com\Citrix\UserHomeDir\opined01\Desktop\Automation-Subarrenda\data\input\coincidencia.xlsx'
+ruta_clientes = r'X:\Soriana\00 - AUDITORIA 2020 - 2024\00 - Auditores\Oscar\Proyectos Python\Automation-Subarrenda\data\input\base_cliente.xlsx'
+ruta_contratos = r'X:\Soriana\00 - AUDITORIA 2020 - 2024\00 - Auditores\Oscar\Proyectos Python\Automation-Subarrenda\data\input\base_contratos.xlsx'
+ruta_inpc = r'X:\Soriana\00 - AUDITORIA 2020 - 2024\00 - Auditores\Oscar\Proyectos Python\Automation-Subarrenda\data\input\base_inpc.xlsx'
+ruta_coincidencia = r'X:\Soriana\00 - AUDITORIA 2020 - 2024\00 - Auditores\Oscar\Proyectos Python\Automation-Subarrenda\data\input\1ra Parte\coincidencia.xlsx'
 
 
 # ------------------------------------------
@@ -152,6 +152,18 @@ def load_clientes():
     if "importe_mtto." in df.columns and "importe_mtto" not in df.columns:
         df = df.rename(columns={"importe_mtto.": "importe_mtto"})
     df = convertir_fechas(df)
+    # Solo usar registros con ORDEN numerico.
+    if "orden" in df.columns:
+        total = len(df)
+        df["orden"] = pd.to_numeric(df["orden"], errors="coerce")
+        df = df.dropna(subset=["orden"]).copy()
+        try:
+            df["orden"] = df["orden"].astype("Int64")
+        except Exception:
+            pass
+        omitidas = total - len(df)
+        if omitidas:
+            print(f"Aviso: {omitidas} filas de base_cliente omitidas por ORDEN no numerico.")
     return df
 
 
@@ -160,6 +172,18 @@ def load_contratos():
     df = pd.read_excel(ruta_contratos)
     df = normalizar_columnas(df)
     df = convertir_fechas(df)
+    # Solo usar registros con ORDEN numerico.
+    if "orden" in df.columns:
+        total = len(df)
+        df["orden"] = pd.to_numeric(df["orden"], errors="coerce")
+        df = df.dropna(subset=["orden"]).copy()
+        try:
+            df["orden"] = df["orden"].astype("Int64")
+        except Exception:
+            pass
+        omitidas = total - len(df)
+        if omitidas:
+            print(f"Aviso: {omitidas} filas de base_contratos omitidas por ORDEN no numerico.")
     return df
 
 
@@ -193,18 +217,9 @@ def load_all():
     contratos = load_contratos()
     inpc = load_inpc()
 
-    try:
-        coincidencia = load_coincidencia()
-        clientes = anexar_orden_a_clientes(clientes, coincidencia)
-        contratos = completar_rfc_contratos(contratos, coincidencia)
-        if "orden" in clientes.columns:
-            faltantes = int(clientes["orden"].isna().sum())
-            if faltantes:
-                print(f"Aviso: {faltantes} filas en base_cliente sin ORDEN (sin match en coincidencia.xlsx).")
-    except FileNotFoundError:
-        print("coincidencia.xlsx no encontrado: se continúa sin ORDEN en base_cliente.")
-    except Exception as exc:
-        print(f"No se pudo cargar/anexar coincidencia.xlsx: {exc}")
+
 
     print("Bases cargadas correctamente.")
     return clientes, contratos, inpc
+
+

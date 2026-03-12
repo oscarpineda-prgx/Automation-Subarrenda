@@ -24,6 +24,7 @@ _MESES = [
     "DICIEMBRE",
 ]
 _MES_MAP = {m: i + 1 for i, m in enumerate(_MESES)}
+_ACCOUNTING_FMT = '_("$"* #,##0.00_);_("$"* (#,##0.00);_("$"* "-"??_);_(@_)'
 
 
 def _sanitizar_nombre_archivo(texto: str) -> str:
@@ -64,7 +65,7 @@ def _coerce_mes(val) -> Optional[int]:
 
 
 def _buscar_mes_fda(df_clientes: Optional[pd.DataFrame], rfc: str, subarrendatario: str) -> Tuple[Optional[int], Optional[str]]:
-    """Fallback: Busca el mes de incremento FDA en base_clientes por RFC (y cliente si existe). Usa solo mes3."""
+    """Fallback: Busca el mes de incremento FDA en base_clientes por RFC (y cliente si existe). Usa columna mes3."""
     if df_clientes is None or df_clientes.empty:
         return None, None
 
@@ -203,6 +204,19 @@ def _buscar_mes_auditoria_por_orden(
     return mes_num, _mes_a_texto(mes_num)
 
 
+def _buscar_mes_auditoria_desde_detalle(df_detalle: pd.DataFrame) -> Tuple[Optional[int], Optional[str]]:
+    """
+    Toma el mes de incremento de auditoria desde la columna mes_incremento del detalle.
+    """
+    if df_detalle is None or df_detalle.empty or "mes_incremento" not in df_detalle.columns:
+        return None, None
+    for val in df_detalle["mes_incremento"]:
+        mes_num = _coerce_mes(val)
+        if mes_num:
+            return mes_num, _mes_a_texto(mes_num)
+    return None, None
+
+
 def _buscar_fecha_primer_cobro(df_detalle: pd.DataFrame) -> Optional[pd.Timestamp]:
     """Devuelve la primera fecha con importe_renta_c > 0 dentro del detalle individual."""
     if "importe_renta_c" not in df_detalle.columns or "fecha" not in df_detalle.columns:
@@ -261,6 +275,20 @@ def _calcular_total_diferencia(df_detalle: pd.DataFrame) -> Optional[float]:
     return float(diferencia[en_rango.fillna(False)].sum())
 
 
+def _desglosar_importe_iva(total_diferencia: Optional[float]) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Desglosa total en:
+    - importe (base): total / 1.16
+    - iva: total - importe
+    """
+    if total_diferencia is None:
+        return None, None
+    total = round(float(total_diferencia), 2)
+    importe = round(total / 1.16, 2)
+    iva = round(total - importe, 2)
+    return importe, iva
+
+
 def _inserta_encabezado_presentacion(
     ruta: str,
     rfc: str,
@@ -308,11 +336,28 @@ def _inserta_encabezado_presentacion(
     etiqueta_total.alignment = Alignment(horizontal="center")
     ws.merge_cells(start_row=6, start_column=14, end_row=6, end_column=16)
 
+    # Desglose IVA / IMPORTE (base) a la izquierda del total
+    etiqueta_iva = ws.cell(row=6, column=6, value="IVA")
+    etiqueta_iva.font = Font(bold=True)
+    etiqueta_iva.alignment = Alignment(horizontal="center")
+    etiqueta_importe = ws.cell(row=7, column=6, value="IMPORTE")
+    etiqueta_importe.font = Font(bold=True)
+    etiqueta_importe.alignment = Alignment(horizontal="center")
+
+    importe_base, iva = _desglosar_importe_iva(total_diferencia)
+    celda_iva = ws.cell(row=6, column=7, value="" if iva is None else iva)
+    celda_importe = ws.cell(row=7, column=7, value="" if importe_base is None else importe_base)
+    celda_iva.alignment = Alignment(horizontal="center")
+    celda_importe.alignment = Alignment(horizontal="center")
+    if total_diferencia is not None:
+        celda_iva.number_format = _ACCOUNTING_FMT
+        celda_importe.number_format = _ACCOUNTING_FMT
+
     valor_total = "" if total_diferencia is None else round(float(total_diferencia), 2)
     celda_total = ws.cell(row=6, column=17, value=valor_total)
     celda_total.alignment = Alignment(horizontal="center")
     if total_diferencia is not None:
-        celda_total.number_format = '_("$"* #,##0.00_);_("$"* (#,##0.00);_("$"* "-"??_);_(@_)'
+        celda_total.number_format = _ACCOUNTING_FMT
 
     wb.save(ruta)
 
@@ -458,13 +503,13 @@ def exportar_detalles_individuales(
             rfc = str(df_grp["rfc"].iloc[0]).strip()
             subarrendatario = str(df_grp["subarrendatario"].iloc[0]).strip()
             mes_fda_num, mes_fda_txt = _buscar_mes_fda_por_orden(df_clientes, orden_val, rfc, subarrendatario)
-            mes_aud_num, mes_aud_txt = _buscar_mes_auditoria_por_orden(df_contratos, orden_val, rfc, subarrendatario)
+            mes_aud_num, mes_aud_txt = _buscar_mes_auditoria_desde_detalle(df_grp)
             fecha_firma = _buscar_fecha_firma_por_orden(df_contratos, orden_val, rfc, subarrendatario)
         else:
             orden_val = None
             rfc, subarrendatario = key
             mes_fda_num, mes_fda_txt = _buscar_mes_fda(df_clientes, rfc, subarrendatario)
-            mes_aud_num, mes_aud_txt = _buscar_mes_auditoria(df_contratos, rfc, subarrendatario)
+            mes_aud_num, mes_aud_txt = _buscar_mes_auditoria_desde_detalle(df_grp)
             fecha_firma = _buscar_fecha_firma(df_contratos, rfc, subarrendatario)
 
         diferencia = (
@@ -477,10 +522,10 @@ def exportar_detalles_individuales(
         mes_primer_cobro = int(pd.to_datetime(fecha_primer_cobro).month) if fecha_primer_cobro is not None else None
         diferencia_cobro = _diff_meses(fecha_firma, fecha_primer_cobro)
 
-        # Limitar registros al 31/05/2025 en la tabla de detalle
+        # Limitar registros al 31/12/2025 en la tabla de detalle
         df_filtrado = df_grp.copy()
         if "fecha" in df_filtrado.columns:
-            max_fecha = pd.Timestamp(year=2025, month=5, day=31)
+            max_fecha = pd.Timestamp(year=2025, month=12, day=31)
             fechas = pd.to_datetime(df_filtrado["fecha"], errors="coerce")
             df_filtrado = df_filtrado[fechas <= max_fecha]
 
