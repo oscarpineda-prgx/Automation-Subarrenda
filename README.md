@@ -21,7 +21,7 @@ Herramienta en Python para automatizar el calculo y presentacion de reportes de 
 | Archivo | Uso principal | Columnas clave (normalizadas) |
 | --- | --- | --- |
 | `base_cliente.xlsx` | Montos facturados y mes FDA | `ano`, `mes2` (mes de cobro), `mes3` (mes incremento FDA), `rfc`, `cliente`, `plaza`, `sucursal`, `importe_renta`, `importe_mtto` |
-| `base_contratos.xlsx` | Fechas y montos de contrato auditoria (por contrato) | `orden`, `fecha_de_firma_del_contrato`, `fecha_de_terminacion_del_contrato`, `rfc_del_subarrendatario`, `nombre_del_subarrendatario`, `superficie_del_inmueble`, `direccion_del_inmueble`, `monto_de_renta_mensual`, `cuota_de_mantenimiento` |
+| `base_contratos.xlsx` | Fechas y montos de contrato auditoria (por contrato) | `orden`, `fecha_de_inicio_del_contrato`, `fecha_de_firma_del_contrato` (fallback), `fecha_de_terminacion_del_contrato`, `rfc_del_subarrendatario`, `nombre_del_subarrendatario`, `superficie_del_inmueble`, `direccion_del_inmueble`, `monto_de_renta_mensual`, `cuota_de_mantenimiento` |
 | `coincidencia.xlsx` | Mapa para asignar ORDEN a base_cliente | `rfc`, `cliente`, `plaza`, `sucursal`, `orden` |
 | `base_inpc.xlsx` | Porcentajes INPC mensuales | `fecha`, `%` (o columna con porcentaje), `mes`, `anio` |
 | `Picture1.png` | Logo para encabezados | Imagen insertada en resumen y detalles individuales |
@@ -64,7 +64,7 @@ python main.py
 | --- | --- |
 | `main.py` | Orquestador: carga datos, genera detalle y resumen, exporta archivos, aplica formato y presentacion. |
 | `src/loader.py` | Lectura de bases de clientes/contratos/INPC; normaliza nombres (trim, minusculas, guiones bajos, sin acentos) y convierte fechas. También agrega `orden` a `base_cliente` usando `coincidencia.xlsx`. |
-| `src/detalle_builder.py` | Genera detalle mensual por contrato (`orden`): fechas mes a mes, renta auditada ajustada por INPC (aniversario usa INPC de dos meses antes), mantenimiento, subtotal y total con IVA; cruza con base cliente por ano/mes/ORDEN (fallback ano/mes/RFC) y calcula diferencias. |
+| `src/detalle_builder.py` | Genera detalle mensual por contrato (`orden`): fechas mes a mes (inicio desde `fecha_de_inicio_del_contrato`, fallback `fecha_de_firma_del_contrato`), renta auditada ajustada por INPC (aniversario usa INPC de dos meses antes), mantenimiento, subtotal y total con IVA; cruza con base cliente por ano/mes/ORDEN y calcula diferencias. |
 | `src/detalle_exporter.py` | Crea un Excel por contrato (ORDEN + RFC + subarrendatario) con logo, total de diferencia, tabla de meses de incremento (FDA vs auditoria) y tabla de fechas (firma vs primer cobro). |
 | `src/resumen_builder.py` | Agrupa por contrato (`orden`, RFC, subarrendatario): sumas de mtto/subtotales/totales solo donde hay cobro, primer importe > 0, banderas SI/NO HAY COBRO, necesidad de acta de entrega, meses sin cobro; renombra y ordena columnas y agrega presentacion al resumen. |
 | `src/format_excel.py` | Formato uniforme: oculta cuadricula, fechas `mm/dd/yyyy`, formato contable para montos, encabezados azul con texto blanco. |

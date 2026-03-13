@@ -8,6 +8,18 @@ def _to_datetime(val):
     return pd.to_datetime(val, errors="coerce")
 
 
+def _obtener_fecha_inicio_contrato(row: pd.Series):
+    """
+    Devuelve la fecha de inicio del contrato.
+    Prioridad: `fecha_de_inicio_del_contrato`; fallback a `fecha_de_firma_del_contrato`.
+    """
+    if row is None:
+        return None
+    if "fecha_de_inicio_del_contrato" in row.index:
+        return row.get("fecha_de_inicio_del_contrato")
+    return row.get("fecha_de_firma_del_contrato")
+
+
 def generar_fechas_mensuales(fecha_inicio, fecha_fin, fecha_max=None):
     """
     Genera fechas mes a mes preservando el dia del inicio, hasta la fecha fin.
@@ -315,12 +327,12 @@ def generar_detalle_por_proveedor(df_contratos, subarrendatario, rfc_sub=None, d
         raise ValueError(f"Subarrendatario no encontrado: {subarrendatario} (rfc={rfc_sub})")
 
     row = df_prov.iloc[0]
-    fecha_firma = row.get("fecha_de_firma_del_contrato")
+    fecha_inicio = _obtener_fecha_inicio_contrato(row)
     fecha_terminacion = row.get("fecha_de_terminacion_del_contrato")
-    fechas = generar_fechas_mensuales(fecha_firma, fecha_terminacion, fecha_max=_MAX_FECHA_REVISION)
+    fechas = generar_fechas_mensuales(fecha_inicio, fecha_terminacion, fecha_max=_MAX_FECHA_REVISION)
     if len(fechas) == 0:
         raise ValueError(
-            f"Fechas invalidas para {subarrendatario}: inicio={fecha_firma}, fin={fecha_terminacion}"
+            f"Fechas invalidas para {subarrendatario}: inicio={fecha_inicio}, fin={fecha_terminacion}"
         )
 
     df_detalle = pd.DataFrame({"fecha": fechas})
@@ -376,11 +388,11 @@ def generar_detalle_por_contrato(df_contratos, orden, df_inpc=None, mes_incremen
 
     row = df_con.iloc[0]
 
-    fecha_firma = row.get("fecha_de_firma_del_contrato")
+    fecha_inicio = _obtener_fecha_inicio_contrato(row)
     fecha_terminacion = row.get("fecha_de_terminacion_del_contrato")
-    fechas = generar_fechas_mensuales(fecha_firma, fecha_terminacion, fecha_max=_MAX_FECHA_REVISION)
+    fechas = generar_fechas_mensuales(fecha_inicio, fecha_terminacion, fecha_max=_MAX_FECHA_REVISION)
     if len(fechas) == 0:
-        raise ValueError(f"Fechas invalidas para orden={orden}: inicio={fecha_firma}, fin={fecha_terminacion}")
+        raise ValueError(f"Fechas invalidas para orden={orden}: inicio={fecha_inicio}, fin={fecha_terminacion}")
 
     df_detalle = pd.DataFrame({"fecha": fechas})
     df_detalle["ano"] = df_detalle["fecha"].dt.year
