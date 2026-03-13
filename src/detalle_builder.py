@@ -122,6 +122,81 @@ def _mapa_mes_incremento_por_orden(df_clientes):
     )
 
 
+def _primer_texto_no_vacio(serie: pd.Series):
+    """Devuelve el primer texto no vacio de una serie; si no existe, regresa None."""
+    for val in serie:
+        if pd.isna(val):
+            continue
+        txt = str(val).strip()
+        if txt:
+            return txt
+    return None
+
+
+def _mapa_identidad_cliente_por_orden(df_clientes: pd.DataFrame) -> pd.DataFrame:
+    """
+    Construye un mapa de identidad por contrato desde base_cliente:
+    ORDEN -> RFC + CLIENTE.
+    """
+    if df_clientes is None or df_clientes.empty or "orden" not in df_clientes.columns:
+        return pd.DataFrame(columns=["orden_key", "rfc_cliente", "cliente"])
+
+    cli = df_clientes.copy()
+    cli["orden_key"] = pd.to_numeric(cli["orden"], errors="coerce")
+    cli = cli.dropna(subset=["orden_key"])
+    if cli.empty:
+        return pd.DataFrame(columns=["orden_key", "rfc_cliente", "cliente"])
+
+    if "rfc" not in cli.columns:
+        cli["rfc"] = None
+    if "cliente" not in cli.columns:
+        cli["cliente"] = None
+
+    identidad = (
+        cli.groupby("orden_key", as_index=False)
+        .agg(
+            rfc_cliente=("rfc", _primer_texto_no_vacio),
+            cliente=("cliente", _primer_texto_no_vacio),
+        )
+    )
+    return identidad
+
+
+def aplicar_identidad_cliente_por_orden(detalle: pd.DataFrame, df_clientes: pd.DataFrame) -> pd.DataFrame:
+    """
+    Sobrescribe identificadores del detalle con datos de base_cliente por ORDEN.
+    Prioriza: ORDEN + RFC + CLIENTE, con fallback a valores existentes si faltan datos.
+    """
+    if detalle is None or detalle.empty:
+        return detalle
+    if df_clientes is None or df_clientes.empty:
+        return detalle
+    if "orden" not in detalle.columns:
+        return detalle
+
+    identidad = _mapa_identidad_cliente_por_orden(df_clientes)
+    if identidad.empty:
+        return detalle
+
+    det = detalle.copy()
+    det["orden_key"] = pd.to_numeric(det["orden"], errors="coerce")
+    det = det.merge(identidad, on="orden_key", how="left")
+
+    rfc_cliente = det["rfc_cliente"].map(lambda v: "" if pd.isna(v) else str(v).strip())
+    cli_cliente = det["cliente"].map(lambda v: "" if pd.isna(v) else str(v).strip())
+
+    if "rfc" not in det.columns:
+        det["rfc"] = None
+    if "subarrendatario" not in det.columns:
+        det["subarrendatario"] = None
+
+    det["rfc"] = det["rfc"].where(rfc_cliente == "", rfc_cliente)
+    det["subarrendatario"] = det["subarrendatario"].where(cli_cliente == "", cli_cliente)
+
+    det = det.drop(columns=["orden_key", "rfc_cliente", "cliente"])
+    return det
+
+
 def calcular_renta_auditoria_con_inpc(fechas, renta_inicial, df_inpc, mes_incremento=None):
     """
     Serie de importe_renta_auditoria aplicando ajustes INPC una vez al ano,
@@ -420,6 +495,7 @@ def generar_detalle_todos(df_contratos, df_clientes=None, df_inpc=None):
     detalle = pd.concat(detalles, ignore_index=True)
     if df_clientes is not None:
         detalle = anexar_importe_renta_mtto_clientes(detalle, df_clientes)
+        detalle = aplicar_identidad_cliente_por_orden(detalle, df_clientes)
     detalle = agregar_incremento_constante(detalle, valor="INPC")
 
     orden = [
