@@ -108,6 +108,21 @@ def _normalizar_mes_incremento(val):
     return None
 
 
+def _meses_transcurridos(fecha_inicio, fecha_actual) -> int:
+    """
+    Calcula meses completos transcurridos entre dos fechas.
+    Si el dia de fecha_actual es menor al dia de fecha_inicio, descuenta un mes.
+    """
+    ini = pd.to_datetime(fecha_inicio, errors="coerce")
+    act = pd.to_datetime(fecha_actual, errors="coerce")
+    if pd.isna(ini) or pd.isna(act):
+        return 0
+    meses = (act.year - ini.year) * 12 + (act.month - ini.month)
+    if act.day < ini.day:
+        meses -= 1
+    return int(meses)
+
+
 def _mapa_mes_incremento_por_orden(df_clientes):
     """Mapea ORDEN -> mes de incremento (columna MES3 de base_cliente)."""
     if df_clientes is None or df_clientes.empty:
@@ -224,13 +239,24 @@ def calcular_renta_auditoria_con_inpc(fechas, renta_inicial, df_inpc, mes_increm
 
     mes_incremento = _normalizar_mes_incremento(mes_incremento)
 
+    def _aplicar_incremento(renta_base, fecha_ref):
+        fecha_inpc = fecha_ref.normalize() - pd.DateOffset(months=2)
+        pct = pct_map.get((fecha_inpc.year, fecha_inpc.month), 0) or 0
+        return renta_base * (1 + pct)
+
     renta_actual = renta_inicial
+    fecha_inicio = fechas_dt[0] if len(fechas_dt) > 0 else pd.NaT
+    primer_incremento_aplicado = False
     serie = []
     for idx, f in enumerate(fechas_dt):
         if idx > 0 and pd.notna(f) and mes_incremento is not None and f.month == mes_incremento:
-            fecha_inpc = f.normalize() - pd.DateOffset(months=2)
-            pct = pct_map.get((fecha_inpc.year, fecha_inpc.month), 0) or 0
-            renta_actual = renta_actual * (1 + pct)
+            if not primer_incremento_aplicado:
+                # Regla de negocio: primer incremento solo despues de 12 meses completos.
+                if _meses_transcurridos(fecha_inicio, f) >= 12:
+                    renta_actual = _aplicar_incremento(renta_actual, f)
+                    primer_incremento_aplicado = True
+            else:
+                renta_actual = _aplicar_incremento(renta_actual, f)
         serie.append(renta_actual)
     return serie
 
