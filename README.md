@@ -92,3 +92,10 @@ python main.py
 - Agregar validacion de esquema de archivos de entrada antes de procesar.
 - Incluir pruebas unitarias para funciones de fecha/INPC/cruces.
 - Exponer configuracion de rutas/archivos via YAML para evitar rutas absolutas.
+
+## Nota sobre las rutas
+
+`src/loader.py` tenía las rutas de los cuatro Excel de entrada escritas como
+rutas absolutas de `X:` (venían de correr el proyecto en Citrix). Ahora se
+calculan desde la raíz del proyecto, así que la carpeta se puede mover o
+renombrar sin romper nada. Los insumos deben seguir en `data/input/`.

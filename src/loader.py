@@ -1,13 +1,21 @@
-import pandas as pd
 import unicodedata
+from pathlib import Path
+
+import pandas as pd
 
 # ------------------------------------------
-#  RUTAS ABSOLUTAS EN CITRIX
+#  RUTAS DE ENTRADA
 # ------------------------------------------
-ruta_clientes = r'X:\Soriana\00 - AUDITORIA 2020 - 2024\00 - Auditores\Oscar\Proyectos Python\Automation-Subarrenda\data\input\base_cliente.xlsx'
-ruta_contratos = r'X:\Soriana\00 - AUDITORIA 2020 - 2024\00 - Auditores\Oscar\Proyectos Python\Automation-Subarrenda\data\input\base_contratos.xlsx'
-ruta_inpc = r'X:\Soriana\00 - AUDITORIA 2020 - 2024\00 - Auditores\Oscar\Proyectos Python\Automation-Subarrenda\data\input\base_inpc.xlsx'
-ruta_coincidencia = r'X:\Soriana\00 - AUDITORIA 2020 - 2024\00 - Auditores\Oscar\Proyectos Python\Automation-Subarrenda\data\input\1ra Parte\coincidencia.xlsx'
+# Se calculan desde la raiz del proyecto (un nivel arriba de src/), no con la
+# ruta absoluta de X:. Asi la carpeta se puede mover o renombrar sin que el
+# proyecto deje de encontrar sus insumos.
+BASE_DIR = Path(__file__).resolve().parents[1]
+INPUT_DIR = BASE_DIR / "data" / "input"
+
+ruta_clientes = INPUT_DIR / "base_cliente.xlsx"
+ruta_contratos = INPUT_DIR / "base_contratos.xlsx"
+ruta_inpc = INPUT_DIR / "base_inpc.xlsx"
+ruta_coincidencia = INPUT_DIR / "1ra Parte" / "coincidencia.xlsx"
 
 
 # ------------------------------------------
